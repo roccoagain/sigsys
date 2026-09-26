@@ -3,8 +3,8 @@ use std::fmt;
 use num_complex::Complex64;
 
 use crate::poly::Poly;
-use crate::ss::{self, Mat};
-use crate::tf::{Tf, fraction};
+use crate::ss;
+use crate::tf::{Tf, divide, fraction, ratio_at_zero};
 
 /// Continuous-to-discrete conversion method.
 #[derive(Clone, Copy, Debug)]
@@ -32,8 +32,8 @@ impl Dtf {
 
     pub fn from_polys(num: Poly, den: Poly, ts: f64) -> Self {
         assert!(!den.is_zero(), "transfer function denominator is zero");
-        let lead = 1.0 / den.coeffs()[0];
-        Dtf { num: num.scale(lead), den: den.scale(lead), ts }
+        let lead = den.coeffs()[0];
+        Dtf { num: divide(&num, lead), den: divide(&den, lead), ts }
     }
 
     pub fn eval(&self, z: Complex64) -> Complex64 {
@@ -48,9 +48,9 @@ impl Dtf {
         self.num.roots()
     }
 
-    /// Value at `z = 1`.
+    /// Value at `z = 1`: ±infinity if there is a pole there (an integrator).
     pub fn dc_gain(&self) -> f64 {
-        self.eval(Complex64::new(1.0, 0.0)).re
+        ratio_at_zero(&self.num.shift(1.0), &self.den.shift(1.0))
     }
 
     /// True iff every pole is strictly inside the unit circle.
@@ -93,7 +93,8 @@ impl fmt::Display for Dtf {
 }
 
 impl Tf {
-    /// Discretizes with sample time `ts`.
+    /// Discretizes with sample time `ts`. ZOH panics for an improper transfer
+    /// function (it has no state-space form); Tustin handles any.
     pub fn c2d(&self, ts: f64, method: Discretize) -> Dtf {
         match method {
             Discretize::Zoh => zoh(self, ts),
@@ -109,17 +110,7 @@ fn zoh(g: &Tf, ts: f64) -> Dtf {
         return Dtf::new([sys.d], [1.0], ts);
     }
 
-    // exp([[A, B], [0, 0]] T) = [[Ad, Bd], [0, 1]]
-    let mut m = ss::zeros(n + 1);
-    for (row, (a_row, b)) in m.iter_mut().zip(sys.a.iter().zip(&sys.b)) {
-        for (mij, aij) in row.iter_mut().zip(a_row) {
-            *mij = aij * ts;
-        }
-        row[n] = b * ts;
-    }
-    let e = ss::expm(&m);
-    let ad: Mat = e[..n].iter().map(|row| row[..n].to_vec()).collect();
-    let bd: Vec<f64> = e[..n].iter().map(|row| row[n]).collect();
+    let (ad, bd, _) = ss::discretize(&sys, ts);
 
     // H(z) = C adj(zI - Ad) Bd / det(zI - Ad) + D
     let (char_poly, adj) = ss::char_poly_adj(&ad);
@@ -183,6 +174,11 @@ mod tests {
         assert!(close(d.dc_gain(), 1.0));
         assert!(close(d.poles()[0].re, (1.0 - t / 2.0) / (1.0 + t / 2.0)));
         assert!(d.is_stable());
+    }
+
+    #[test]
+    fn integrator_dc_gain_is_infinite() {
+        assert_eq!(Dtf::new([1.0], [1.0, -1.0], 0.1).dc_gain(), f64::INFINITY);
     }
 
     #[test]

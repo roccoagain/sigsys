@@ -73,6 +73,27 @@ pub(crate) fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// Exact discretization over one step `dt` for an input that varies linearly
+/// across the step: `x⁺ = Φx + Γ1 u_k + Γ2 (u_{k+1} - u_k)`. With a held input
+/// the `Γ2` term vanishes and `(Φ, Γ1)` is the zero-order-hold discretization.
+pub(crate) fn discretize(sys: &Ss, dt: f64) -> (Mat, Vec<f64>, Vec<f64>) {
+    // exp([[A, B, 0], [0, 0, 1], [0, 0, 0]] dt) = [[Φ, Γ1, Γ2], [0, 1, 1], [0, 0, 1]]
+    let n = sys.b.len();
+    let mut m = zeros(n + 2);
+    for (row, (a_row, b)) in m.iter_mut().zip(sys.a.iter().zip(&sys.b)) {
+        for (mij, aij) in row.iter_mut().zip(a_row) {
+            *mij = aij * dt;
+        }
+        row[n] = b * dt;
+    }
+    m[n][n + 1] = 1.0;
+    let e = expm(&m);
+    let phi = e[..n].iter().map(|row| row[..n].to_vec()).collect();
+    let gamma1 = e[..n].iter().map(|row| row[n]).collect();
+    let gamma2 = e[..n].iter().map(|row| row[n + 1]).collect();
+    (phi, gamma1, gamma2)
+}
+
 /// Matrix exponential by scaling and squaring with a Taylor series.
 pub(crate) fn expm(m: &Mat) -> Mat {
     let n = m.len();

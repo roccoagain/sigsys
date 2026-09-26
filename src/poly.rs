@@ -57,6 +57,22 @@ impl Poly {
         (0..k).fold(Poly::new([1.0]), |acc, _| &acc * self)
     }
 
+    fn max_abs(&self) -> f64 {
+        self.coeffs.iter().fold(0.0, |m, c| m.max(c.abs()))
+    }
+
+    /// `p(s + a)` (Taylor shift), e.g. to examine behaviour near `s = -a`.
+    pub fn shift(&self, a: f64) -> Poly {
+        let mut c = self.coeffs.clone();
+        let n = c.len();
+        for i in 0..n {
+            for j in 1..n - i {
+                c[j] += a * c[j - 1];
+            }
+        }
+        Poly::new(c)
+    }
+
     pub fn eval(&self, s: Complex64) -> Complex64 {
         self.coeffs.iter().fold(Complex64::new(0.0, 0.0), |acc, c| acc * s + c)
     }
@@ -69,8 +85,10 @@ impl Poly {
         self.coeffs.iter().rev().take_while(|c| **c == 0.0).count()
     }
 
-    /// All complex roots, via Durand–Kerner iteration. Repeated roots converge
-    /// more slowly and are less accurate (around 1e-6).
+    /// All complex roots, via Durand–Kerner iteration. Simple roots are accurate
+    /// to near machine precision. A root of multiplicity `m` is inherently
+    /// ill-conditioned: expect errors around `1e-16^(1/m)` (about 1e-4 for a
+    /// 4-fold root), possibly as a small spurious imaginary part.
     pub fn roots(&self) -> Vec<Complex64> {
         let at_origin = self.zeros_at_origin();
         let reduced = &self.coeffs[..self.coeffs.len() - at_origin];
@@ -110,8 +128,18 @@ impl Poly {
     /// Routh–Hurwitz: true iff every root is in the open left half-plane, i.e.
     /// every first-column entry of the Routh array is nonzero with the same sign.
     pub fn is_hurwitz(&self) -> bool {
-        let p = &self.coeffs;
-        let eps = 1e-12 * p.iter().fold(0.0_f64, |m, c| m.max(c.abs()));
+        let n = self.degree();
+        let c = &self.coeffs;
+        if self.is_zero() || c[n] == 0.0 {
+            return false; // root at the origin
+        }
+        // Substitute s = σs' with σ the geometric mean of the root magnitudes, so
+        // the array is well scaled whether the roots are near 1e-6 or 1e6.
+        let sigma = (c[n] / c[0]).abs().powf(1.0 / n.max(1) as f64);
+        let scaled: Vec<f64> = c.iter().enumerate().map(|(i, x)| x * sigma.powi((n - i) as i32)).collect();
+        let max = scaled.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+        let p: Vec<f64> = scaled.iter().map(|x| x / max).collect();
+        let eps = 1e-12;
         let mut rows: Vec<Vec<f64>> = vec![
             p.iter().copied().step_by(2).collect(),
             p.iter().copied().skip(1).step_by(2).collect(),
@@ -174,13 +202,25 @@ fn fmt_coeff(x: f64) -> String {
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
+/// Coefficient-wise sum in which results that cancel to rounding noise (relative
+/// to the operands) become exact zeros, so s(s + 0.3) built by subtraction still
+/// has a root at 0.
+fn sum_coeffs(a: &Poly, b: &Poly) -> Vec<f64> {
+    let n = a.coeffs.len().max(b.coeffs.len());
+    let pad = |p: &[f64]| [vec![0.0; n - p.len()], p.to_vec()].concat();
+    let tol = 1e-14 * a.max_abs().max(b.max_abs());
+    pad(&a.coeffs)
+        .iter()
+        .zip(pad(&b.coeffs))
+        .map(|(x, y)| x + y)
+        .map(|x| if x.abs() <= tol { 0.0 } else { x })
+        .collect()
+}
+
 impl Add for &Poly {
     type Output = Poly;
     fn add(self, rhs: &Poly) -> Poly {
-        let n = self.coeffs.len().max(rhs.coeffs.len());
-        let pad = |p: &[f64]| [vec![0.0; n - p.len()], p.to_vec()].concat();
-        let sum: Vec<f64> = pad(&self.coeffs).iter().zip(pad(&rhs.coeffs)).map(|(a, b)| a + b).collect();
-        Poly::new(sum)
+        Poly::new(sum_coeffs(self, rhs))
     }
 }
 
@@ -253,6 +293,26 @@ mod tests {
         let roots = [Complex64::new(-1.0, 2.0), Complex64::new(-1.0, -2.0), Complex64::new(-3.0, 0.0)];
         let p = Poly::from_roots(&roots);
         assert_eq!(p, Poly::new([1.0, 5.0, 11.0, 15.0])); // (s^2 + 2s + 5)(s + 3)
+    }
+
+    #[test]
+    fn shift_and_cancellation() {
+        assert_eq!(Poly::new([1.0, 0.0, 0.0]).shift(1.0), Poly::new([1.0, 2.0, 1.0])); // (s+1)^2
+        let p = &(&Poly::new([1.0, 0.1]) * &Poly::new([1.0, 0.2])) - &Poly::new([0.02]);
+        assert_eq!(p.zeros_at_origin(), 1);
+        let q = &Poly::new([0.1 + 0.2, 1.0]) - &Poly::new([0.3, 0.0]); // leading term cancels
+        assert_eq!(q.degree(), 0);
+    }
+
+    #[test]
+    fn routh_is_scale_free() {
+        let fast = Poly::new([1.0, 1e3]).pow(5);
+        let slow = Poly::new([1.0, 1e-4]).pow(4);
+        assert!(fast.is_hurwitz() && slow.is_hurwitz());
+        assert!(Poly::new([1.0, 1e-13]).is_hurwitz());
+        assert!(!Poly::new([1.0, 1e3, 0.0]).is_hurwitz()); // root at origin
+        assert!(Poly::new([-1.0, -3.0, -2.0]).is_hurwitz());
+        assert!(!Poly::new([1.0, 1.0, 2.0, 2.0, 3.0]).is_hurwitz()); // zero in first column
     }
 
     #[test]

@@ -23,6 +23,9 @@ impl Tf {
         }
         let (t_end, dt) = self.sim_grid();
         let (t, y) = self.step_response(t_end, dt);
+        if y.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
         let r: Vec<f64> = y.iter().map(|v| v / final_value).collect();
 
         // First time the normalized response reaches `level`, linearly interpolated.
@@ -69,6 +72,14 @@ mod tests {
         let os = (-std::f64::consts::PI * 0.5 / wd).exp() * 100.0;
         assert!((info.overshoot_pct - os).abs() < 0.01);
         assert!((info.peak_time - std::f64::consts::PI / wd).abs() < 0.01);
+    }
+
+    #[test]
+    fn stiff_system() {
+        // Slow pole at -1e-3 dominates: rise ≈ ln 9 / 1e-3 ≈ 2197 s.
+        let info = Tf::new([10.0], [1.0, 1e4 + 1e-3, 10.0]).step_info().unwrap();
+        assert!((info.rise_time - 2197.2).abs() < 1.0, "{info:?}");
+        assert!(info.peak.is_finite());
     }
 
     #[test]

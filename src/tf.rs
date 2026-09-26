@@ -7,7 +7,8 @@ use num_complex::Complex64;
 use crate::poly::Poly;
 
 /// A transfer function `num(s) / den(s)`, stored with a monic denominator.
-/// No pole-zero cancellation is performed.
+/// No pole-zero cancellation is performed, and `==` compares coefficients
+/// exactly, so `(s+1)/(s+1)^2 != 1/(s+1)`.
 ///
 /// Combine with `*` (series), `+` (parallel), `-`, `/`, and `f64` scalars:
 /// `2.0 / (&s * &s + 9.0)` where `s = Tf::s()`.
@@ -33,8 +34,8 @@ impl Tf {
 
     pub fn from_polys(num: Poly, den: Poly) -> Self {
         assert!(!den.is_zero(), "transfer function denominator is zero");
-        let lead = 1.0 / den.coeffs()[0];
-        Tf { num: num.scale(lead), den: den.scale(lead) }
+        let lead = den.coeffs()[0];
+        Tf { num: divide(&num, lead), den: divide(&den, lead) }
     }
 
     pub fn gain(k: f64) -> Self {
@@ -86,12 +87,15 @@ impl Tf {
         self.num.roots()
     }
 
-    /// Value at `s = 0` (infinite if there is a pole at the origin).
+    /// Value at `s = 0`: ±infinity if there is a pole at the origin, 0 for a zero there.
     pub fn dc_gain(&self) -> f64 {
-        self.eval(Complex64::new(0.0, 0.0)).re
+        ratio_at_zero(&self.num, &self.den)
     }
 
     /// Negative feedback: `self / (1 + self * h)`.
+    ///
+    /// Panics if `1 + self * h` is identically zero (an algebraic loop, such as
+    /// unity feedback around a gain of -1).
     pub fn feedback(&self, h: &Tf) -> Tf {
         let num = &self.num * &h.den;
         let den = &(&self.den * &h.den) + &(&self.num * &h.num);
@@ -113,7 +117,8 @@ impl Tf {
     }
 
     /// Steady-state error when `self` is the open loop `L(s)` in a unity
-    /// negative-feedback loop. `None` if the closed loop is unstable.
+    /// negative-feedback loop. `None` if the closed loop is unstable, which
+    /// includes an uncancelled pole-zero pair at the origin such as `s / (s(s+1))`.
     pub fn steady_state_error(&self, input: Input) -> Option<f64> {
         if !self.unity_feedback().is_stable() {
             return None;
@@ -231,6 +236,27 @@ macro_rules! tf_ops {
 
 tf_ops!(Add add, Sub sub, Mul mul, Div div);
 
+/// Divides every coefficient by `k` (dividing, not multiplying by `1/k`, keeps
+/// results exact when they are representable, e.g. 3/5 == 0.6).
+pub(crate) fn divide(p: &Poly, k: f64) -> Poly {
+    Poly::new(p.coeffs().iter().map(|c| c / k).collect::<Vec<_>>())
+}
+
+/// `lim s->0 num(s)/den(s)`, from the lowest-order nonzero coefficients.
+pub(crate) fn ratio_at_zero(num: &Poly, den: &Poly) -> f64 {
+    if num.is_zero() {
+        return 0.0;
+    }
+    let (nz, dz) = (num.zeros_at_origin(), den.zeros_at_origin());
+    let (n, d) = (num.coeffs(), den.coeffs());
+    let ratio = n[n.len() - 1 - nz] / d[d.len() - 1 - dz];
+    match nz.cmp(&dz) {
+        std::cmp::Ordering::Greater => 0.0,
+        std::cmp::Ordering::Equal => ratio,
+        std::cmp::Ordering::Less => f64::INFINITY.copysign(ratio),
+    }
+}
+
 /// Lays out `num` over `den` with a dividing line, both centered.
 pub(crate) fn fraction(num: &str, den: &str) -> String {
     let width = num.chars().count().max(den.chars().count());
@@ -275,6 +301,15 @@ mod tests {
         assert_eq!(&g + &g, Tf::new([2.0, 2.0], [1.0, 2.0, 1.0]));
         assert_eq!(Tf::new([4.0], [2.0, 2.0]), Tf::new([2.0], [1.0, 1.0])); // normalized
         assert!((g.dc_gain() - 1.0).abs() < 1e-12);
+        assert_eq!(Tf::new([3.0], [5.0, 5.0]), Tf::new([0.6], [1.0, 1.0]));
+    }
+
+    #[test]
+    fn dc_gain_limits() {
+        assert_eq!(Tf::new([1.0], [1.0, 0.0]).dc_gain(), f64::INFINITY);
+        assert_eq!(Tf::new([-2.0], [1.0, 0.0]).dc_gain(), f64::NEG_INFINITY);
+        assert_eq!(Tf::new([1.0, 0.0], [1.0, 1.0]).dc_gain(), 0.0);
+        assert_eq!(Tf::new([2.0, 0.0], [1.0, 3.0, 0.0]).dc_gain(), 2.0 / 3.0); // s cancels in the limit
     }
 
     #[test]
