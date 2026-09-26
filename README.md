@@ -47,7 +47,7 @@ The crate isn't published. Add it by path or git:
 
 ```toml
 [dependencies]
-sigsys = { path = "../controls" }  # path to this repo
+sigsys = { path = "../sigsys" }  # path to this repo
 ```
 
 ## Examples
