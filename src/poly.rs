@@ -1,11 +1,11 @@
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::ops::{Add, Mul, Neg, Sub};
 
 use num_complex::Complex64;
 
 use crate::forward_owned_op;
 
-/// A polynomial in `s`, coefficients highest power first: `s^2 + 9` is `[1, 0, 9]`.
+/// A polynomial, coefficients highest power first: `s^2 + 9` is `[1, 0, 9]`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Poly {
     coeffs: Vec<f64>,
@@ -22,6 +22,21 @@ impl Poly {
         Poly { coeffs }
     }
 
+    /// Monic polynomial with the given roots. Complex roots should come in
+    /// conjugate pairs; any leftover imaginary part is dropped.
+    pub fn from_roots(roots: &[Complex64]) -> Self {
+        let mut c = vec![Complex64::new(1.0, 0.0)];
+        for r in roots {
+            let mut next = vec![Complex64::new(0.0, 0.0); c.len() + 1];
+            for (i, ci) in c.iter().enumerate() {
+                next[i] += ci;
+                next[i + 1] -= ci * r;
+            }
+            c = next;
+        }
+        Poly::new(c.iter().map(|z| z.re).collect::<Vec<_>>())
+    }
+
     pub fn coeffs(&self) -> &[f64] {
         &self.coeffs
     }
@@ -34,11 +49,19 @@ impl Poly {
         self.coeffs == [0.0]
     }
 
+    pub fn scale(&self, k: f64) -> Poly {
+        Poly::new(self.coeffs.iter().map(|c| c * k).collect::<Vec<_>>())
+    }
+
+    pub fn pow(&self, k: usize) -> Poly {
+        (0..k).fold(Poly::new([1.0]), |acc, _| &acc * self)
+    }
+
     pub fn eval(&self, s: Complex64) -> Complex64 {
         self.coeffs.iter().fold(Complex64::new(0.0, 0.0), |acc, c| acc * s + c)
     }
 
-    /// Number of roots at `s = 0`.
+    /// Number of roots at the origin.
     pub fn zeros_at_origin(&self) -> usize {
         if self.is_zero() {
             return 0;
@@ -108,6 +131,47 @@ impl Poly {
             .take(p.len())
             .all(|r| r.first().is_some_and(|c| c.abs() > eps && c.signum() == p[0].signum()))
     }
+
+    /// Formats with the given variable name, e.g. `fmt_var("z")` gives `z^2 + 9`.
+    pub fn fmt_var(&self, var: &str) -> String {
+        if self.is_zero() {
+            return "0".to_string();
+        }
+        let n = self.degree();
+        let mut out = String::new();
+        for (i, &c) in self.coeffs.iter().enumerate() {
+            if c == 0.0 {
+                continue;
+            }
+            let power = n - i;
+            match (out.is_empty(), c < 0.0) {
+                (true, true) => out.push('-'),
+                (true, false) => {}
+                (false, neg) => out.push_str(if neg { " - " } else { " + " }),
+            }
+            let mag = c.abs();
+            if mag != 1.0 || power == 0 {
+                out.push_str(&fmt_coeff(mag));
+            }
+            match power {
+                0 => {}
+                1 => out.push_str(var),
+                _ => write!(out, "{var}^{power}").unwrap(),
+            }
+        }
+        out
+    }
+}
+
+/// Five significant figures, trailing zeros trimmed; scientific notation when tiny or huge.
+fn fmt_coeff(x: f64) -> String {
+    let exp = x.abs().log10().floor();
+    if !(-4.0..9.0).contains(&exp) {
+        return format!("{x:.4e}");
+    }
+    let decimals = (4.0 - exp).max(0.0) as usize;
+    let s = format!("{x:.decimals$}");
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
 impl Add for &Poly {
@@ -136,7 +200,7 @@ impl Mul for &Poly {
 impl Neg for &Poly {
     type Output = Poly;
     fn neg(self) -> Poly {
-        Poly::new(self.coeffs.iter().map(|c| -c).collect::<Vec<_>>())
+        self.scale(-1.0)
     }
 }
 
@@ -153,34 +217,7 @@ forward_owned_op!(Poly, Sub, sub);
 
 impl fmt::Display for Poly {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.is_zero() {
-            return write!(f, "0");
-        }
-        let n = self.degree();
-        let mut first = true;
-        for (i, &c) in self.coeffs.iter().enumerate() {
-            if c == 0.0 {
-                continue;
-            }
-            let power = n - i;
-            let sign = if c < 0.0 { "-" } else { "+" };
-            match (first, c < 0.0) {
-                (true, true) => write!(f, "-")?,
-                (true, false) => {}
-                (false, _) => write!(f, " {sign} ")?,
-            }
-            first = false;
-            let mag = c.abs();
-            if mag != 1.0 || power == 0 {
-                write!(f, "{mag}")?;
-            }
-            match power {
-                0 => {}
-                1 => write!(f, "s")?,
-                _ => write!(f, "s^{power}")?,
-            }
-        }
-        Ok(())
+        f.write_str(&self.fmt_var("s"))
     }
 }
 
@@ -194,21 +231,28 @@ mod tests {
         let b = Poly::new([1.0, 2.0]); // s + 2
         assert_eq!(&a * &b, Poly::new([1.0, 3.0, 2.0]));
         assert_eq!(&a - &b, Poly::new([-1.0]));
+        assert_eq!(a.pow(2), Poly::new([1.0, 2.0, 1.0]));
         assert_eq!(Poly::new([0.0, 1.0, 0.0, 9.0]).to_string(), "s^2 + 9");
-        assert_eq!(Poly::new([-2.0, 1.0, -0.5]).to_string(), "-2s^2 + s - 0.5");
+        assert_eq!(Poly::new([-2.0, 1.0, -0.5]).fmt_var("z"), "-2z^2 + z - 0.5");
     }
 
     #[test]
     fn roots() {
         let r = Poly::new([1.0, 6.0, 11.0, 6.0]).roots(); // (s+1)(s+2)(s+3)
-        let re: Vec<f64> = r.iter().map(|z| z.re).collect();
-        for (got, want) in re.iter().zip([-3.0, -2.0, -1.0]) {
-            assert!((got - want).abs() < 1e-9);
+        for (got, want) in r.iter().zip([-3.0, -2.0, -1.0]) {
+            assert!((got.re - want).abs() < 1e-9);
         }
         let r = Poly::new([1.0, 0.0, 9.0, 0.0]).roots(); // s(s^2 + 9)
         assert_eq!(r.len(), 3);
         assert!(r.iter().any(|z| z.norm() == 0.0));
         assert!(r.iter().any(|z| (z.im - 3.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn from_roots_round_trips() {
+        let roots = [Complex64::new(-1.0, 2.0), Complex64::new(-1.0, -2.0), Complex64::new(-3.0, 0.0)];
+        let p = Poly::from_roots(&roots);
+        assert_eq!(p, Poly::new([1.0, 5.0, 11.0, 15.0])); // (s^2 + 2s + 5)(s + 3)
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::ss::{dot, mat_vec};
 use crate::tf::Tf;
 
 impl Tf {
@@ -5,41 +6,27 @@ impl Tf {
     /// fixed step `dt` (RK4 on the controllable canonical state-space form).
     /// Returns `(t, y)`. Panics if the transfer function is improper.
     pub fn simulate(&self, u: impl Fn(f64) -> f64, t_end: f64, dt: f64) -> (Vec<f64>, Vec<f64>) {
-        let n = self.den.degree();
-        assert!(self.num.degree() <= n, "cannot simulate an improper transfer function");
-
-        // Ascending-power coefficients; den is monic.
-        let a: Vec<f64> = self.den.coeffs().iter().rev().copied().collect();
-        let mut b: Vec<f64> = self.num.coeffs().iter().rev().copied().collect();
-        b.resize(n + 1, 0.0);
-        let d = b[n];
-        let c: Vec<f64> = (0..n).map(|k| b[k] - d * a[k]).collect();
-
+        let ss = self.to_ss();
         let deriv = |x: &[f64], u: f64| -> Vec<f64> {
-            let mut dx: Vec<f64> = x.iter().skip(1).copied().collect();
-            if n > 0 {
-                dx.push(u - (0..n).map(|k| a[k] * x[k]).sum::<f64>());
-            }
-            dx
+            mat_vec(&ss.a, x).iter().zip(&ss.b).map(|(ax, b)| ax + b * u).collect()
         };
         let shifted = |x: &[f64], k: &[f64], h: f64| -> Vec<f64> {
             x.iter().zip(k).map(|(xi, ki)| xi + h * ki).collect()
         };
 
         let steps = (t_end / dt).round() as usize;
-        let mut x = vec![0.0; n];
+        let mut x = vec![0.0; ss.b.len()];
         let (mut ts, mut ys) = (Vec::with_capacity(steps + 1), Vec::with_capacity(steps + 1));
         for i in 0..=steps {
             let t = i as f64 * dt;
-            let y = c.iter().zip(&x).map(|(ci, xi)| ci * xi).sum::<f64>() + d * u(t);
             ts.push(t);
-            ys.push(y);
+            ys.push(dot(&ss.c, &x) + ss.d * u(t));
 
             let k1 = deriv(&x, u(t));
             let k2 = deriv(&shifted(&x, &k1, dt / 2.0), u(t + dt / 2.0));
             let k3 = deriv(&shifted(&x, &k2, dt / 2.0), u(t + dt / 2.0));
             let k4 = deriv(&shifted(&x, &k3, dt), u(t + dt));
-            for j in 0..n {
+            for j in 0..x.len() {
                 x[j] += dt / 6.0 * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j]);
             }
         }
@@ -49,6 +36,17 @@ impl Tf {
     /// Unit step response.
     pub fn step_response(&self, t_end: f64, dt: f64) -> (Vec<f64>, Vec<f64>) {
         self.simulate(|_| 1.0, t_end, dt)
+    }
+
+    /// A time horizon and step size that suit this system's pole locations:
+    /// about ten time constants of the slowest pole, resolving the fastest.
+    pub fn sim_grid(&self) -> (f64, f64) {
+        let poles = self.poles();
+        let slowest = poles.iter().map(|p| p.re.abs()).filter(|r| *r > 1e-9).fold(f64::INFINITY, f64::min);
+        let fastest = poles.iter().map(|p| p.norm()).fold(1e-9, f64::max);
+        let t_end = if slowest.is_finite() { (10.0 / slowest).clamp(1e-3, 1e5) } else { 10.0 };
+        let dt = (t_end / 5000.0).min(0.1 / fastest).max(t_end / 1e6);
+        (t_end, dt)
     }
 }
 

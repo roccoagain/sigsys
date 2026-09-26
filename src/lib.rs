@@ -1,20 +1,33 @@
 //! A small signals-and-systems toolbox: polynomials, transfer functions,
-//! stability, steady-state error, and time/frequency response.
+//! stability, steady-state error, time and frequency response, root locus,
+//! discrete-time systems, signal utilities, and SVG plots.
 //!
 //! ```
-//! use controls::Tf;
+//! use controls::{Input, Tf};
 //!
-//! let g = Tf::new([2.0], [1.0, 0.0, 9.0]); // 2 / (s^2 + 9)
-//! let d = Tf::new([1.0, 10.0], [1.0]);     // K_d s + K
-//! let closed = (&d * &g).unity_feedback();
-//! assert!(closed.is_stable());
+//! let s = Tf::s();
+//! let g = 2.0 / (&s * &s + 9.0);   // 2 / (s^2 + 9)
+//! let l = Tf::pid(10.0, 0.0, 1.0) * &g; // K = 10, K_d = 1
+//! assert!(l.unity_feedback().is_stable());
+//! assert!((l.steady_state_error(Input::Step).unwrap() - 9.0 / 29.0).abs() < 1e-12);
 //! ```
 
+pub mod discrete;
+pub mod freq;
+pub mod metrics;
+pub mod plot;
 pub mod poly;
+mod rlocus;
+pub mod signals;
 mod sim;
+mod ss;
 pub mod tf;
 
+pub use discrete::{Discretize, Dtf};
+pub use freq::{BodePoint, Crossing, Margins};
+pub use metrics::StepInfo;
 pub use num_complex::Complex64;
+pub use plot::{Marker, Plot, save_stacked};
 pub use poly::Poly;
 pub use tf::{Input, Tf};
 
