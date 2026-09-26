@@ -6,7 +6,7 @@ use std::{fs, io, path::Path};
 use num_complex::Complex64;
 
 use crate::discrete::Dtf;
-use crate::signals::linspace;
+use crate::signals::{linspace, logspace};
 use crate::tf::Tf;
 
 const WIDTH: f64 = 720.0;
@@ -318,8 +318,18 @@ impl Tf {
 
     /// Root locus of `self` as an open loop, for gains 0..=`k_max`.
     pub fn root_locus_plot(&self, k_max: f64) -> Plot {
-        // Quadratic spacing: dense near k = 0 where the poles move fastest.
-        let gains: Vec<f64> = linspace(0.0, 1.0, 800).iter().map(|x| k_max * x * x).collect();
+        // Quadratic spacing: dense near k = 0 where the poles move fastest. Poles
+        // also move fastest near a breakaway point (like sqrt(k - k_b)), so land
+        // exactly on each one and cluster samples either side of it.
+        let mut gains: Vec<f64> = linspace(0.0, 1.0, 800).iter().map(|x| k_max * x * x).collect();
+        for (_, kb) in self.breakaway_points().into_iter().filter(|(_, k)| *k <= k_max) {
+            gains.push(kb);
+            for d in logspace(1e-8, 0.05, 60) {
+                gains.extend([kb * (1.0 - d), kb * (1.0 + d)].into_iter().filter(|k| *k <= k_max));
+            }
+        }
+        gains.sort_by(f64::total_cmp);
+        gains.dedup();
         let mut p = Plot::new("Root locus").labels("Real", "Imaginary").hline(0.0).vline(0.0);
         for branch in self.root_locus(&gains) {
             p = p.line("", re_im(&branch));

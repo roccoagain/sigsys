@@ -61,6 +61,11 @@ impl Poly {
         self.coeffs.iter().fold(0.0, |m, c| m.max(c.abs()))
     }
 
+    pub fn derivative(&self) -> Poly {
+        let n = self.degree();
+        Poly::new(self.coeffs[..n].iter().enumerate().map(|(i, c)| c * (n - i) as f64).collect::<Vec<_>>())
+    }
+
     /// `p(s + a)` (Taylor shift), e.g. to examine behaviour near `s = -a`.
     pub fn shift(&self, a: f64) -> Poly {
         let mut c = self.coeffs.clone();
@@ -273,6 +278,8 @@ mod tests {
         assert_eq!(&a - &b, Poly::new([-1.0]));
         assert_eq!(a.pow(2), Poly::new([1.0, 2.0, 1.0]));
         assert_eq!(Poly::new([0.0, 1.0, 0.0, 9.0]).to_string(), "s^2 + 9");
+        assert_eq!(Poly::new([1.0, 3.0, 2.0]).derivative(), Poly::new([2.0, 3.0]));
+        assert_eq!(Poly::new([5.0]).derivative(), Poly::new([0.0]));
         assert_eq!(Poly::new([-2.0, 1.0, -0.5]).fmt_var("z"), "-2z^2 + z - 0.5");
     }
 

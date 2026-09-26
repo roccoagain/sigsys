@@ -39,6 +39,27 @@ impl Tf {
         }
         branches
     }
+
+    /// Real breakaway / break-in points of the locus for `k >= 0`, as `(s, k)`.
+    /// These are the real roots of `N'D - ND' = 0` (where `dk/ds = 0`) at which
+    /// `k = -D(s)/N(s)` is nonnegative; two or more closed-loop poles coincide there.
+    pub fn breakaway_points(&self) -> Vec<(f64, f64)> {
+        let (n, d) = (&self.num, &self.den);
+        let poly = &(&n.derivative() * d) - &(n * &d.derivative());
+        if poly.is_zero() {
+            return vec![];
+        }
+        let real = |p: &crate::Poly, s: f64| p.eval(Complex64::new(s, 0.0)).re;
+        let mut points: Vec<(f64, f64)> = poly
+            .roots()
+            .into_iter()
+            .filter(|z| z.im.abs() <= 1e-9 * z.re.abs().max(1.0))
+            .map(|z| (z.re, -real(d, z.re) / real(n, z.re)))
+            .filter(|(_, k)| k.is_finite() && *k >= 0.0)
+            .collect();
+        points.sort_by(|a, b| a.1.total_cmp(&b.1));
+        points
+    }
 }
 
 #[cfg(test)]
@@ -55,6 +76,20 @@ mod tests {
             assert!((b[2].im.abs() - 2.0).abs() < 1e-9);
         }
         assert!(branches.iter().any(|b| b[0].re == -2.0) && branches.iter().any(|b| b[0].re == 0.0));
+    }
+
+    #[test]
+    fn breakaway_points() {
+        let pts = Tf::new([1.0], [1.0, 2.0, 0.0]).breakaway_points(); // 1/(s(s+2))
+        assert_eq!(pts.len(), 1);
+        assert!((pts[0].0 + 1.0).abs() < 1e-12 && (pts[0].1 - 1.0).abs() < 1e-12);
+
+        // 2(s+10)/(s^2+9): break-in at -10 - √109 with k = √109 - 10 + ... (k = -D/N there).
+        let pts = Tf::new([2.0, 20.0], [1.0, 0.0, 9.0]).breakaway_points();
+        let s = -10.0 - 109f64.sqrt();
+        assert_eq!(pts.len(), 1); // the root at -10 + √109 has k < 0
+        assert!((pts[0].0 - s).abs() < 1e-9);
+        assert!((pts[0].1 - (-(s * s + 9.0) / (2.0 * s + 20.0))).abs() < 1e-9);
     }
 
     #[test]
