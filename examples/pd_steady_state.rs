@@ -1,7 +1,7 @@
 // PD controller D(s) = K + K_d s on plant G(s) = 2 / (s^2 + 9), unity feedback.
 // Run with: cargo run --example pd_steady_state
 
-use controls::{Input, Tf};
+use sigsys::{Input, Tf};
 
 fn main() {
     let g = Tf::new([2.0], [1.0, 0.0, 9.0]);

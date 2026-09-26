@@ -3,7 +3,7 @@
 //! discrete-time systems, signal utilities, and SVG plots.
 //!
 //! ```
-//! use controls::{Input, Tf};
+//! use sigsys::{Input, Tf};
 //!
 //! let s = Tf::s();
 //! let g = 2.0 / (&s * &s + 9.0);   // 2 / (s^2 + 9)

@@ -1,11 +1,11 @@
-# controls
+# sigsys
 
 A small signals-and-systems toolbox in Rust: transfer functions, stability,
 steady-state error, time and frequency response, root locus, discrete-time
 systems, and SVG plots. It has one dependency (`num-complex`).
 
 ```rust
-use controls::{Input, Tf, save_stacked};
+use sigsys::{Input, Tf, save_stacked};
 
 let s = Tf::s();
 let g = 2.0 / (&s * &s + 9.0);          // plant 2 / (s^2 + 9)
@@ -47,7 +47,7 @@ The crate isn't published. Add it by path or git:
 
 ```toml
 [dependencies]
-controls = { path = "../controls" }
+sigsys = { path = "../controls" }  # path to this repo
 ```
 
 ## Examples

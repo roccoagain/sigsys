@@ -1,8 +1,8 @@
 // A walk through the toolbox on the PD-controlled plant 2 / (s^2 + 9).
 // Run with: cargo run --example tour   (plots are written to ./plots/)
 
-use controls::signals::{convolve, fft_real};
-use controls::{Discretize, Tf, save_stacked};
+use sigsys::signals::{convolve, fft_real};
+use sigsys::{Discretize, Tf, save_stacked};
 
 fn main() -> std::io::Result<()> {
     std::fs::create_dir_all("plots")?;
