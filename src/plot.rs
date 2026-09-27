@@ -91,169 +91,210 @@ impl Plot {
     }
 
     fn render(&self, out: &mut String, oy: f64, id: usize) {
-        let (left, right, top, bottom) = (70.0, 20.0, 36.0, 48.0);
-        let (x0, y0, pw, ph) = (left, oy + top, WIDTH - left - right, HEIGHT - top - bottom);
-        let tx = |x: f64| if self.log_x { x.log10() } else { x };
-        let usable = |x: f64, y: f64| x.is_finite() && y.is_finite() && (!self.log_x || x > 0.0);
+        let f = Frame::new(self, oy);
+        self.draw_axes(out, &f);
+        self.draw_data(out, &f, id);
+        self.draw_legend(out, &f);
+    }
 
-        let points = self.series.iter().flat_map(|s| &s.points).filter(|(x, y)| usable(*x, *y));
-        let xs: Vec<f64> = points
-            .clone()
-            .map(|p| tx(p.0))
-            .chain(self.vlines.iter().filter(|x| usable(**x, 0.0)).map(|x| tx(*x)))
-            .collect();
-        let ys: Vec<f64> = points.map(|p| p.1).chain(self.hlines.iter().copied()).collect();
-        // Pad x only for scatter plots, so markers at the extremes aren't clipped.
-        let has_markers = self.series.iter().any(|s| matches!(s.style, Style::Markers(_)));
-        let (xmin, xmax) = range(&xs, if has_markers && !self.log_x { 0.05 } else { 0.0 });
-        let (ymin, ymax) = range(&ys, 0.05);
-        let px = |x: f64| x0 + (tx(x) - xmin) / (xmax - xmin) * pw;
-        let py = |y: f64| (y0 + ph - (y - ymin) / (ymax - ymin) * ph).clamp(-1e6, 1e6);
-
-        // Grid and tick labels.
+    /// Grid, tick labels, and titles.
+    fn draw_axes(&self, out: &mut String, f: &Frame) {
         let xticks = if self.log_x {
-            log_ticks(xmin, xmax)
+            log_ticks(f.xmin, f.xmax)
         } else {
-            let (step, ticks) = nice_ticks(xmin, xmax, false);
+            let (step, ticks) = nice_ticks(f.xmin, f.xmax, false);
             ticks.into_iter().map(|v| (v, fmt_num(v, step))).collect()
         };
         for (v, label) in xticks {
-            let x = x0 + (v - xmin) / (xmax - xmin) * pw;
-            write!(out, r##"<line x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{:.1}" stroke="#e5e7eb"/>"##, y0 + ph)
+            let x = f.x_at(v);
+            write!(
+                out,
+                r##"<line x1="{x:.1}" y1="{:.1}" x2="{x:.1}" y2="{:.1}" stroke="#e5e7eb"/>"##,
+                f.y0,
+                f.bottom()
+            )
+            .unwrap();
+            write!(out, r#"<text x="{x:.1}" y="{:.1}" text-anchor="middle">{label}</text>"#, f.bottom() + 16.0)
                 .unwrap();
-            write!(out, r#"<text x="{x:.1}" y="{:.1}" text-anchor="middle">{label}</text>"#, y0 + ph + 16.0).unwrap();
         }
-        let (ystep, yticks) = nice_ticks(ymin, ymax, false);
+        let (ystep, yticks) = nice_ticks(f.ymin, f.ymax, false);
         for v in yticks {
-            let y = py(v);
-            write!(out, r##"<line x1="{x0:.1}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#e5e7eb"/>"##, x0 + pw)
+            let y = f.py(v);
+            write!(out, r##"<line x1="{:.1}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#e5e7eb"/>"##, f.x0, f.right())
                 .unwrap();
-            write!(
-                out,
-                r#"<text x="{:.1}" y="{:.1}" text-anchor="end">{}</text>"#,
-                x0 - 6.0,
-                y + 4.0,
-                fmt_num(v, ystep)
-            )
-            .unwrap();
+            let label = fmt_num(v, ystep);
+            write!(out, r#"<text x="{:.1}" y="{:.1}" text-anchor="end">{label}</text>"#, f.x0 - 6.0, y + 4.0).unwrap();
         }
 
-        // Titles.
-        let cx = x0 + pw / 2.0;
-        let cy = y0 + ph / 2.0;
+        let cx = f.x0 + f.pw / 2.0;
+        let cy = f.y0 + f.ph / 2.0;
+        let (title, x_label, y_label) = (esc(&self.title), esc(&self.x_label), esc(&self.y_label));
+        let (title_y, x_label_y) = (f.oy + 22.0, f.oy + HEIGHT - 10.0);
+        write!(out, r#"<text x="{cx:.1}" y="{title_y:.1}" text-anchor="middle" font-size="14" font-weight="bold">{title}</text>"#).unwrap();
+        write!(out, r#"<text x="{cx:.1}" y="{x_label_y:.1}" text-anchor="middle">{x_label}</text>"#).unwrap();
         write!(
             out,
-            r#"<text x="{cx:.1}" y="{:.1}" text-anchor="middle" font-size="14" font-weight="bold">{}</text>"#,
-            oy + 22.0,
-            esc(&self.title)
+            r#"<text x="18" y="{cy:.1}" text-anchor="middle" transform="rotate(-90 18 {cy:.1})">{y_label}</text>"#
         )
         .unwrap();
-        write!(
-            out,
-            r#"<text x="{cx:.1}" y="{:.1}" text-anchor="middle">{}</text>"#,
-            oy + HEIGHT - 10.0,
-            esc(&self.x_label)
-        )
-        .unwrap();
-        write!(
-            out,
-            r#"<text x="18" y="{cy:.1}" text-anchor="middle" transform="rotate(-90 18 {cy:.1})">{}</text>"#,
-            esc(&self.y_label)
-        )
-        .unwrap();
+    }
 
-        // Data, clipped to the plot area.
+    /// Reference lines and series, clipped to the plot area, then the frame border.
+    fn draw_data(&self, out: &mut String, f: &Frame, id: usize) {
+        let Frame { x0, y0, pw, ph, .. } = *f;
         write!(out, r#"<clipPath id="clip{id}"><rect x="{x0}" y="{y0}" width="{pw}" height="{ph}"/></clipPath><g clip-path="url(#clip{id})">"#).unwrap();
+        let dashed = r##"stroke="#6b7280" stroke-dasharray="4 3""##;
         for &y in &self.hlines {
-            write!(
-                out,
-                r##"<line x1="{x0:.1}" y1="{0:.1}" x2="{1:.1}" y2="{0:.1}" stroke="#6b7280" stroke-dasharray="4 3"/>"##,
-                py(y),
-                x0 + pw
-            )
-            .unwrap();
+            let (y, right) = (f.py(y), f.right());
+            write!(out, r#"<line x1="{x0:.1}" y1="{y:.1}" x2="{right:.1}" y2="{y:.1}" {dashed}/>"#).unwrap();
         }
-        for &x in self.vlines.iter().filter(|x| usable(**x, 0.0)) {
-            write!(
-                out,
-                r##"<line x1="{0:.1}" y1="{y0:.1}" x2="{0:.1}" y2="{1:.1}" stroke="#6b7280" stroke-dasharray="4 3"/>"##,
-                px(x),
-                y0 + ph
-            )
-            .unwrap();
+        for &x in self.vlines.iter().filter(|x| f.usable(**x, 0.0)) {
+            let (x, bottom) = (f.px(x), f.bottom());
+            write!(out, r#"<line x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{bottom:.1}" {dashed}/>"#).unwrap();
         }
         for (i, s) in self.series.iter().enumerate() {
             let color = COLORS[i % COLORS.len()];
             match s.style {
                 Style::Line => {
                     // Break the line wherever a point can't be drawn.
-                    for segment in s.points.split(|(x, y)| !usable(*x, *y)).filter(|seg| seg.len() > 1) {
+                    for segment in s.points.split(|(x, y)| !f.usable(*x, *y)).filter(|seg| seg.len() > 1) {
                         let pts: Vec<String> =
-                            segment.iter().map(|(x, y)| format!("{:.2},{:.2}", px(*x), py(*y))).collect();
-                        write!(
-                            out,
-                            r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="2"/>"#,
-                            pts.join(" ")
-                        )
-                        .unwrap();
+                            segment.iter().map(|(x, y)| format!("{:.2},{:.2}", f.px(*x), f.py(*y))).collect();
+                        let pts = pts.join(" ");
+                        write!(out, r#"<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2"/>"#)
+                            .unwrap();
                     }
                 }
                 Style::Markers(m) => {
-                    for &(x, y) in s.points.iter().filter(|(x, y)| usable(*x, *y)) {
-                        marker(out, m, px(x), py(y), color);
+                    for &(x, y) in s.points.iter().filter(|(x, y)| f.usable(*x, *y)) {
+                        marker(out, m, f.px(x), f.py(y), color);
                     }
                 }
             }
         }
         out.push_str("</g>");
         write!(out, r##"<rect x="{x0}" y="{y0}" width="{pw}" height="{ph}" fill="none" stroke="#374151"/>"##).unwrap();
+    }
 
-        // Legend, top-right inside the plot.
+    /// Legend of the labeled series, in whichever inside corner covers the fewest data points.
+    fn draw_legend(&self, out: &mut String, f: &Frame) {
         let labeled: Vec<(usize, &Series)> =
             self.series.iter().enumerate().filter(|(_, s)| !s.label.is_empty()).collect();
-        if !labeled.is_empty() {
-            let longest = labeled.iter().map(|(_, s)| s.label.chars().count()).max().unwrap();
-            let (w, h) = (40.0 + longest as f64 * 7.0, 8.0 + 18.0 * labeled.len() as f64);
-            // Use whichever corner covers the fewest data points.
-            let drawn: Vec<(f64, f64)> = self
-                .series
+        let Some(longest) = labeled.iter().map(|(_, s)| s.label.chars().count()).max() else {
+            return;
+        };
+        let (w, h) = (40.0 + longest as f64 * 7.0, 8.0 + 18.0 * labeled.len() as f64);
+        let drawn: Vec<(f64, f64)> = f.drawable(self).map(|(x, y)| (f.px(x), f.py(y))).collect();
+        let (left, right) = (f.x0 + 8.0, f.right() - w - 8.0);
+        let (top, bottom) = (f.y0 + 8.0, f.bottom() - h - 8.0);
+        let covered = |(cx, cy): (f64, f64)| {
+            drawn
                 .iter()
-                .flat_map(|s| &s.points)
-                .filter(|(x, y)| usable(*x, *y))
-                .map(|(x, y)| (px(*x), py(*y)))
-                .collect();
-            let corners = [
-                (x0 + pw - w - 8.0, y0 + 8.0),
-                (x0 + 8.0, y0 + 8.0),
-                (x0 + pw - w - 8.0, y0 + ph - h - 8.0),
-                (x0 + 8.0, y0 + ph - h - 8.0),
-            ];
-            let covered = |(cx, cy): (f64, f64)| {
-                drawn
-                    .iter()
-                    .filter(|(x, y)| *x >= cx - 6.0 && *x <= cx + w + 6.0 && *y >= cy - 6.0 && *y <= cy + h + 6.0)
-                    .count()
-            };
-            let (lx, ly) = corners.into_iter().min_by_key(|c| covered(*c)).unwrap();
-            write!(out, r##"<rect x="{lx:.1}" y="{ly:.1}" width="{w:.1}" height="{h:.1}" fill="white" fill-opacity="0.9" stroke="#d1d5db"/>"##).unwrap();
-            for (row, (i, s)) in labeled.iter().enumerate() {
-                let color = COLORS[i % COLORS.len()];
-                let y = ly + 16.0 + 18.0 * row as f64;
-                match s.style {
-                    Style::Line => write!(
-                        out,
-                        r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{color}" stroke-width="2"/>"#,
-                        lx + 8.0,
-                        y - 4.0,
-                        lx + 28.0,
-                        y - 4.0
-                    )
-                    .unwrap(),
-                    Style::Markers(m) => marker(out, m, lx + 18.0, y - 4.0, color),
-                }
-                write!(out, r#"<text x="{:.1}" y="{y:.1}">{}</text>"#, lx + 34.0, esc(&s.label)).unwrap();
+                .filter(|(x, y)| *x >= cx - 6.0 && *x <= cx + w + 6.0 && *y >= cy - 6.0 && *y <= cy + h + 6.0)
+                .count()
+        };
+        let (lx, ly) = [(right, top), (left, top), (right, bottom), (left, bottom)]
+            .into_iter()
+            .min_by_key(|c| covered(*c))
+            .unwrap();
+        write!(out, r##"<rect x="{lx:.1}" y="{ly:.1}" width="{w:.1}" height="{h:.1}" fill="white" fill-opacity="0.9" stroke="#d1d5db"/>"##).unwrap();
+        for (row, (i, s)) in labeled.iter().enumerate() {
+            let color = COLORS[i % COLORS.len()];
+            let y = ly + 16.0 + 18.0 * row as f64;
+            let (x1, x2, ym) = (lx + 8.0, lx + 28.0, y - 4.0);
+            match s.style {
+                Style::Line => write!(
+                    out,
+                    r#"<line x1="{x1:.1}" y1="{ym:.1}" x2="{x2:.1}" y2="{ym:.1}" stroke="{color}" stroke-width="2"/>"#
+                )
+                .unwrap(),
+                Style::Markers(m) => marker(out, m, lx + 18.0, ym, color),
             }
+            write!(out, r#"<text x="{:.1}" y="{y:.1}">{}</text>"#, lx + 34.0, esc(&s.label)).unwrap();
         }
+    }
+}
+
+/// Where one plot sits on the canvas, and how data coordinates map to pixels.
+/// On a log axis, `xmin`/`xmax` are in decades (log10 units).
+#[derive(Clone, Copy)]
+struct Frame {
+    /// Top of this plot's slot in a stacked SVG.
+    oy: f64,
+    x0: f64,
+    y0: f64,
+    pw: f64,
+    ph: f64,
+    xmin: f64,
+    xmax: f64,
+    ymin: f64,
+    ymax: f64,
+    log_x: bool,
+}
+
+impl Frame {
+    fn new(plot: &Plot, oy: f64) -> Frame {
+        let (left, right, top, bottom) = (70.0, 20.0, 36.0, 48.0);
+        let mut f = Frame {
+            oy,
+            x0: left,
+            y0: oy + top,
+            pw: WIDTH - left - right,
+            ph: HEIGHT - top - bottom,
+            xmin: 0.0,
+            xmax: 1.0,
+            ymin: 0.0,
+            ymax: 1.0,
+            log_x: plot.log_x,
+        };
+        let xs: Vec<f64> = f
+            .drawable(plot)
+            .map(|p| f.tx(p.0))
+            .chain(plot.vlines.iter().filter(|x| f.usable(**x, 0.0)).map(|x| f.tx(*x)))
+            .collect();
+        let ys: Vec<f64> = f.drawable(plot).map(|p| p.1).chain(plot.hlines.iter().copied()).collect();
+        // Pad x only for scatter plots, so markers at the extremes aren't clipped.
+        let has_markers = plot.series.iter().any(|s| matches!(s.style, Style::Markers(_)));
+        (f.xmin, f.xmax) = range(&xs, if has_markers && !plot.log_x { 0.05 } else { 0.0 });
+        (f.ymin, f.ymax) = range(&ys, 0.05);
+        f
+    }
+
+    /// Data x to axis units.
+    fn tx(&self, x: f64) -> f64 {
+        if self.log_x { x.log10() } else { x }
+    }
+
+    fn usable(&self, x: f64, y: f64) -> bool {
+        x.is_finite() && y.is_finite() && (!self.log_x || x > 0.0)
+    }
+
+    /// Every series point that can be drawn.
+    fn drawable<'a>(&'a self, plot: &'a Plot) -> impl Iterator<Item = (f64, f64)> + 'a {
+        plot.series.iter().flat_map(|s| s.points.iter().copied()).filter(|(x, y)| self.usable(*x, *y))
+    }
+
+    fn right(&self) -> f64 {
+        self.x0 + self.pw
+    }
+
+    fn bottom(&self) -> f64 {
+        self.y0 + self.ph
+    }
+
+    /// Pixel x of a value in axis units.
+    fn x_at(&self, v: f64) -> f64 {
+        self.x0 + (v - self.xmin) / (self.xmax - self.xmin) * self.pw
+    }
+
+    /// Pixel x of a data x.
+    fn px(&self, x: f64) -> f64 {
+        self.x_at(self.tx(x))
+    }
+
+    /// Pixel y of a data y, clamped so wild values still give valid SVG.
+    fn py(&self, y: f64) -> f64 {
+        (self.bottom() - (y - self.ymin) / (self.ymax - self.ymin) * self.ph).clamp(-1e6, 1e6)
     }
 }
 

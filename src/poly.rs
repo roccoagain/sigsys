@@ -80,6 +80,17 @@ impl Poly {
         Poly::new(c)
     }
 
+    /// `p(a/b) b^n` for polynomials `a`, `b`: substitutes the rational function
+    /// `a/b` for the variable and clears denominators. `n` must be at least the
+    /// degree of `p` (pass a larger `n` to put two polynomials over a common `b^n`).
+    pub(crate) fn compose_ratio(&self, a: &Poly, b: &Poly, n: usize) -> Poly {
+        let d = self.degree();
+        self.coeffs.iter().enumerate().fold(Poly::new([0.0]), |acc, (i, &c)| {
+            let k = d - i;
+            acc + (&a.pow(k) * &b.pow(n - k)).scale(c)
+        })
+    }
+
     pub fn eval(&self, s: Complex64) -> Complex64 {
         self.coeffs.iter().fold(Complex64::new(0.0, 0.0), |acc, c| acc * s + c)
     }

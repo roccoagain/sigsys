@@ -54,8 +54,14 @@ impl Dtf {
     }
 
     /// True iff every pole is strictly inside the unit circle.
+    ///
+    /// Maps `z = (1 + s)/(1 - s)`, which takes the unit disc onto the open left
+    /// half-plane, and applies the Routh–Hurwitz test ([`Poly::is_hurwitz`]).
     pub fn is_stable(&self) -> bool {
-        self.poles().iter().all(|p| p.norm() < 1.0 - 1e-9)
+        let n = self.den.degree();
+        let mapped = self.den.compose_ratio(&Poly::new([1.0, 1.0]), &Poly::new([-1.0, 1.0]), n);
+        // A pole at z = -1 maps to s = ∞ and shows up only as a drop in degree.
+        mapped.degree() == n && mapped.is_hurwitz()
     }
 
     /// `H(e^{jωT})` for `w` in rad/s.
@@ -123,17 +129,10 @@ fn zoh(g: &Tf, ts: f64) -> Dtf {
 }
 
 fn tustin(g: &Tf, ts: f64) -> Dtf {
+    // s = (2/T)(z - 1)/(z + 1), over the common denominator (z + 1)^n.
     let n = g.den.degree().max(g.num.degree());
-    let (zm1, zp1) = (Poly::new([1.0, -1.0]), Poly::new([1.0, 1.0]));
-    // Σ c_k s^k  ->  Σ c_k (2/T)^k (z-1)^k (z+1)^(n-k), after multiplying through by (z+1)^n.
-    let substitute = |p: &Poly| {
-        let d = p.degree();
-        p.coeffs().iter().enumerate().fold(Poly::new([0.0]), |acc, (i, &c)| {
-            let k = d - i;
-            acc + (&zm1.pow(k) * &zp1.pow(n - k)).scale(c * (2.0 / ts).powi(k as i32))
-        })
-    };
-    Dtf::from_polys(substitute(&g.num), substitute(&g.den), ts)
+    let (a, b) = (Poly::new([2.0 / ts, -2.0 / ts]), Poly::new([1.0, 1.0]));
+    Dtf::from_polys(g.num.compose_ratio(&a, &b, n), g.den.compose_ratio(&a, &b, n), ts)
 }
 
 #[cfg(test)]
@@ -179,6 +178,18 @@ mod tests {
     #[test]
     fn integrator_dc_gain_is_infinite() {
         assert_eq!(Dtf::new([1.0], [1.0, -1.0], 0.1).dc_gain(), f64::INFINITY);
+    }
+
+    #[test]
+    fn stability_by_mapped_routh() {
+        assert!(Dtf::new([1.0], [1.0, -0.5], 1.0).is_stable());
+        assert!(Dtf::new([1.0], [1.0, 0.0, 0.0], 1.0).is_stable()); // double pole at z = 0
+        assert!(Dtf::new([1.0], [1.0, -1.8, 0.9999], 1.0).is_stable()); // |z| ≈ 0.99995
+        assert!(!Dtf::new([1.0], [1.0, -1.0], 1.0).is_stable()); // integrator, z = 1
+        assert!(!Dtf::new([1.0], [1.0, 1.0], 1.0).is_stable()); // z = -1
+        assert!(!Dtf::new([1.0], [1.0, 0.0, 1.0], 1.0).is_stable()); // z = ±j
+        assert!(!Dtf::new([1.0], [1.0, -2.5, 1.0], 1.0).is_stable()); // z = 2, 0.5
+        assert!(!Dtf::new([1.0], [1.0, 0.5, -0.5], 1.0).is_stable()); // z = -1, 0.5
     }
 
     #[test]
