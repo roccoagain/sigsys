@@ -61,6 +61,14 @@ fn on_imag_axis(p: &Poly) -> (Poly, Poly) {
     (Poly::new(re), Poly::new(im))
 }
 
+/// True when `p(jω)` is zero up to rounding, relative to the terms summed to
+/// evaluate it. At a jω-axis pole or zero `Im(N conj D)` vanishes too, but `L`
+/// is infinite or zero there, not a phase crossover.
+fn vanishes_on_axis(p: &Poly, w: f64) -> bool {
+    let scale = p.coeffs().iter().fold(0.0, |acc, c| acc * w + c.abs());
+    p.eval(Complex64::new(0.0, w)).norm() <= 1e-9 * scale
+}
+
 /// Nonnegative real roots, deduplicated.
 fn nonnegative_real_roots(p: &Poly) -> Vec<f64> {
     if p.is_zero() {
@@ -152,7 +160,9 @@ impl Tf {
         let gain = nonnegative_real_roots(&phase_poly)
             .into_iter()
             .map(|w| (w, self.freq_response(w)))
-            .filter(|(_, l)| l.is_finite() && l.re < 0.0 && l.norm() < 1e8) // skip jω-axis poles
+            .filter(|(w, l)| {
+                l.is_finite() && l.re < 0.0 && !vanishes_on_axis(&self.num, *w) && !vanishes_on_axis(&self.den, *w)
+            })
             .map(|(w, l)| Crossing { w, margin: 1.0 / l.norm() })
             .min_by(|a, b| a.margin.ln().abs().total_cmp(&b.margin.ln().abs()));
 
@@ -180,6 +190,22 @@ mod tests {
         let (pm, gm) = (m.phase.unwrap(), m.gain.unwrap());
         assert!((Tf::zpk(&[], &poles, 10.0 * dc).bode(pm.w).mag_db).abs() < 1e-6);
         assert!(pm.margin < 0.0 && gm.margin < 1.0, "{m:?}"); // DC gain 10 with 14 lags: unstable
+    }
+
+    #[test]
+    fn high_gain_loop_still_has_gain_margin() {
+        // 1e10 / (s(s+1)(s+2)): phase crossover at √2 with |L| = 1e10/6. A crude
+        // "|L| > 1e8 means a jω-axis pole" filter used to drop it (infinite margin).
+        let gm = Tf::new([1e10], [1.0, 3.0, 2.0, 0.0]).margins().gain.unwrap();
+        assert!((gm.w - 2f64.sqrt()).abs() < 1e-9 && (gm.margin * 1e10 / 6.0 - 1.0).abs() < 1e-9, "{gm:?}");
+    }
+
+    #[test]
+    fn jw_axis_pole_is_not_a_phase_crossover() {
+        // 1/((s^2+4)(s+1)): phase is -180° just above ω = 2, but the pole there is
+        // not a crossover; the real one is where L is finite and negative.
+        let gm = Tf::new([1.0], [1.0, 1.0, 4.0, 4.0]).margins().gain;
+        assert!(gm.is_none_or(|c| (c.w - 2.0).abs() > 1e-3), "{gm:?}");
     }
 
     #[test]
