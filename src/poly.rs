@@ -263,11 +263,17 @@ fn durand_kerner(p: &Poly, radius: f64, angle: f64) -> Vec<Complex64> {
 fn fmt_coeff(x: f64) -> String {
     let exp = x.abs().log10().floor();
     if !(-4.0..9.0).contains(&exp) {
-        return format!("{x:.4e}");
+        let s = format!("{x:.4e}");
+        let (mantissa, e) = s.split_once('e').unwrap();
+        return format!("{}e{e}", trim_zeros(mantissa));
     }
     let decimals = (4.0 - exp).max(0.0) as usize;
-    let s = format!("{x:.decimals$}");
-    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
+    trim_zeros(&format!("{x:.decimals$}")).to_string()
+}
+
+/// Drops trailing zeros after a decimal point, and the point itself if bare.
+fn trim_zeros(s: &str) -> &str {
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.') } else { s }
 }
 
 /// Coefficient-wise sum in which results that cancel to rounding noise (relative
@@ -447,6 +453,14 @@ mod tests {
         assert!(!Poly::new([1.0, 1.0, 1.0, 1.0]).is_hurwitz()); // (s + 1)(s^2 + 1)
         assert!(!(&Poly::new([1.0, 0.3]) * &Poly::new([1.0, 0.0, 0.7])).is_hurwitz());
         assert!(!Poly::new([1.0, 1.0, -1.0]).is_hurwitz());
+    }
+
+    #[test]
+    fn scientific_coefficients_are_trimmed() {
+        assert_eq!(Poly::new([1.5e12, 0.0]).to_string(), "1.5e12s");
+        assert_eq!(Poly::new([1e-5, 1.0]).to_string(), "1e-5s + 1");
+        assert_eq!(Poly::new([-2.5e-7]).to_string(), "-2.5e-7");
+        assert_eq!(Poly::new([1.2346e20]).to_string(), "1.2346e20");
     }
 
     #[test]
