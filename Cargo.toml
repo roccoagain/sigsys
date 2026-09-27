@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A small signals-and-systems toolbox: transfer functions, stability, time and frequency response, root locus, discrete time, and SVG plots"
 repository = "https://github.com/roccoagain/sigsys"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 num-complex = "0.4.6"
