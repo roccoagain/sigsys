@@ -152,7 +152,7 @@ impl Plot {
         let Frame { x0, y0, pw, ph, .. } = *f;
         write!(out, r#"<clipPath id="clip{id}"><rect x="{x0}" y="{y0}" width="{pw}" height="{ph}"/></clipPath><g clip-path="url(#clip{id})">"#).unwrap();
         let dashed = r##"stroke="#6b7280" stroke-dasharray="4 3""##;
-        for &y in &self.hlines {
+        for &y in self.hlines.iter().filter(|y| y.is_finite()) {
             let (y, right) = (f.py(y), f.right());
             write!(out, r#"<line x1="{x0:.1}" y1="{y:.1}" x2="{right:.1}" y2="{y:.1}" {dashed}/>"#).unwrap();
         }
@@ -260,7 +260,8 @@ impl Frame {
             .map(|p| f.tx(p.0))
             .chain(plot.vlines.iter().filter(|x| f.usable(**x, 0.0)).map(|x| f.tx(*x)))
             .collect();
-        let ys: Vec<f64> = f.drawable(plot).map(|p| p.1).chain(plot.hlines.iter().copied()).collect();
+        let ys: Vec<f64> =
+            f.drawable(plot).map(|p| p.1).chain(plot.hlines.iter().copied().filter(|y| y.is_finite())).collect();
         // Pad x only for scatter plots, so markers at the extremes aren't clipped.
         let has_markers = plot.series.iter().any(|s| matches!(s.style, Style::Markers(_)));
         (f.xmin, f.xmax) = range(&xs, if has_markers && !plot.log_x { 0.05 } else { 0.0 });
@@ -509,6 +510,16 @@ mod tests {
         assert_eq!(fmt_num(t[1], step), "0.2");
         let (_, decades) = nice_ticks(-2.0, 2.0, true);
         assert_eq!(decades, vec![-2.0, -1.0, 0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn non_finite_reference_lines_are_skipped() {
+        for bad in [f64::NAN, f64::INFINITY] {
+            let p = Plot::new("t").line("a", vec![(0.0, 1.0), (1.0, 2.0)]).hline(bad).vline(bad);
+            let svg = p.to_svg();
+            assert!(!svg.contains("NaN") && !svg.contains("inf"), "{bad}");
+            assert_eq!(svg.matches(r#"text-anchor="end""#).count(), 6, "y ticks for {bad}");
+        }
     }
 
     #[test]
