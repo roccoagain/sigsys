@@ -111,10 +111,14 @@ impl Plot {
         let py = |y: f64| (y0 + ph - (y - ymin) / (ymax - ymin) * ph).clamp(-1e6, 1e6);
 
         // Grid and tick labels.
-        let (xstep, xticks) = nice_ticks(xmin, xmax, self.log_x);
-        for v in xticks {
+        let xticks = if self.log_x {
+            log_ticks(xmin, xmax)
+        } else {
+            let (step, ticks) = nice_ticks(xmin, xmax, false);
+            ticks.into_iter().map(|v| (v, fmt_num(v, step))).collect()
+        };
+        for (v, label) in xticks {
             let x = x0 + (v - xmin) / (xmax - xmin) * pw;
-            let label = if self.log_x { fmt_num(10f64.powf(v), 10f64.powf(v)) } else { fmt_num(v, xstep) };
             write!(out, r##"<line x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{:.1}" stroke="#e5e7eb"/>"##, y0 + ph).unwrap();
             write!(out, r#"<text x="{x:.1}" y="{:.1}" text-anchor="middle">{label}</text>"#, y0 + ph + 16.0).unwrap();
         }
@@ -255,6 +259,17 @@ fn nice_ticks(lo: f64, hi: f64, decades: bool) -> (f64, Vec<f64>) {
     (step, (first..=last).map(|i| i as f64 * step).collect())
 }
 
+/// Ticks for a log axis spanning `lo..hi` decades, as `(log10 position, label)`:
+/// whole decades, or round linear values when fewer than two decades fall inside.
+fn log_ticks(lo: f64, hi: f64) -> Vec<(f64, String)> {
+    let (_, decades) = nice_ticks(lo, hi, true);
+    if decades.len() >= 2 {
+        return decades.into_iter().map(|v| (v, fmt_num(10f64.powf(v), 10f64.powf(v)))).collect();
+    }
+    let (step, ticks) = nice_ticks(10f64.powf(lo), 10f64.powf(hi), false);
+    ticks.into_iter().map(|x| (x.log10(), fmt_num(x, step))).collect()
+}
+
 fn fmt_num(v: f64, step: f64) -> String {
     if v.abs() < step * 1e-6 {
         return "0".into();
@@ -355,6 +370,13 @@ impl Dtf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_axis_under_a_decade_still_has_ticks() {
+        let ticks = log_ticks(2f64.log10(), 8f64.log10());
+        let labels: Vec<&str> = ticks.iter().map(|t| t.1.as_str()).collect();
+        assert_eq!(labels, ["2", "3", "4", "5", "6", "7", "8"]);
+    }
 
     #[test]
     fn ticks_are_round_numbers() {

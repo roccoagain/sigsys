@@ -158,6 +158,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn op_amp_margins_survive_wide_coefficient_range() {
+        let pm = Tf::new([1e7], [1.0, 1.0]).margins().phase.unwrap();
+        assert!((pm.w - 1e7).abs() < 1.0 && (pm.margin - 90.0).abs() < 1e-3, "{pm:?}");
+    }
+
+    #[test]
     fn classic_third_order_margins() {
         // L = 1 / (s(s+1)(s+2)): phase crossover at √2 with |L| = 1/6.
         let m = Tf::new([1.0], [1.0, 3.0, 2.0, 0.0]).margins();

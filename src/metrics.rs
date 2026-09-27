@@ -12,7 +12,8 @@ pub struct StepInfo {
 }
 
 impl Tf {
-    /// `None` if the system is unstable or its final value is zero.
+    /// `None` if the system is unstable, its final value is zero, or the simulated
+    /// response fails to rise through 90% and settle within 2% of the final value.
     pub fn step_info(&self) -> Option<StepInfo> {
         if !self.is_stable() {
             return None;
@@ -35,13 +36,15 @@ impl Tf {
             None => f64::NAN,
         };
         let (i_peak, r_peak) = r.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap();
-        let settling_time = r
-            .iter()
-            .rposition(|v| (v - 1.0).abs() > 0.02)
-            .map_or(0.0, |i| t[(i + 1).min(t.len() - 1)]);
+        let rise_time = cross(0.9) - cross(0.1);
+        let unsettled = |v: &f64| (v - 1.0).abs() > 0.02;
+        if rise_time.is_nan() || r.last().is_some_and(unsettled) {
+            return None;
+        }
+        let settling_time = r.iter().rposition(unsettled).map_or(0.0, |i| t[i + 1]);
 
         Some(StepInfo {
-            rise_time: cross(0.9) - cross(0.1),
+            rise_time,
             settling_time,
             peak_time: t[i_peak],
             peak: y[i_peak],
@@ -54,6 +57,13 @@ impl Tf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn very_slow_pole() {
+        let info = Tf::new([1e-5], [1.0, 1e-5]).step_info().unwrap();
+        assert!((info.rise_time - 9f64.ln() * 1e5).abs() < 1e2, "{info:?}");
+        assert!((info.final_value - 1.0).abs() < 1e-12);
+    }
 
     #[test]
     fn first_order() {

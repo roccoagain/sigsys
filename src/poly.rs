@@ -57,10 +57,6 @@ impl Poly {
         (0..k).fold(Poly::new([1.0]), |acc, _| &acc * self)
     }
 
-    fn max_abs(&self) -> f64 {
-        self.coeffs.iter().fold(0.0, |m, c| m.max(c.abs()))
-    }
-
     pub fn derivative(&self) -> Poly {
         let n = self.degree();
         Poly::new(self.coeffs[..n].iter().enumerate().map(|(i, c)| c * (n - i) as f64).collect::<Vec<_>>())
@@ -121,7 +117,7 @@ impl Poly {
         }
 
         for z in &mut r {
-            if z.im.abs() < 1e-9 * z.re.abs().max(1.0) {
+            if z.im.abs() < 1e-9 * z.norm() {
                 z.im = 0.0;
             }
         }
@@ -144,25 +140,41 @@ impl Poly {
         let scaled: Vec<f64> = c.iter().enumerate().map(|(i, x)| x * sigma.powi((n - i) as i32)).collect();
         let max = scaled.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
         let p: Vec<f64> = scaled.iter().map(|x| x / max).collect();
-        let eps = 1e-12;
-        let mut rows: Vec<Vec<f64>> = vec![
-            p.iter().copied().step_by(2).collect(),
-            p.iter().copied().skip(1).step_by(2).collect(),
-        ];
+        // Each entry carries a bound on its accumulated rounding error, so an entry
+        // counts as zero only when it is indistinguishable from cancellation noise.
+        // Given coefficients are exact: only scaling has perturbed them.
+        let noise: Vec<f64> = p.iter().map(|x| x.abs() * (n + 2) as f64 * f64::EPSILON).collect();
+        let is_zero = |x: f64, e: f64| x == 0.0 || x.abs() <= 16.0 * e;
+        let split = |v: &[f64], skip: usize| -> Vec<f64> { v.iter().copied().skip(skip).step_by(2).collect() };
+        let mut rows = vec![split(&p, 0), split(&p, 1)];
+        let mut errs = vec![split(&noise, 0), split(&noise, 1)];
+        let get = |r: &Vec<f64>, j: usize| r.get(j).copied().unwrap_or(0.0);
         for _ in 2..p.len() {
             let (a, b) = (&rows[rows.len() - 2], &rows[rows.len() - 1]);
-            if b[0].abs() <= eps {
+            let (ea, eb) = (&errs[errs.len() - 2], &errs[errs.len() - 1]);
+            if is_zero(b[0], eb[0]) {
                 return false;
             }
-            let get = |r: &Vec<f64>, j: usize| r.get(j).copied().unwrap_or(0.0);
-            let next = (0..a.len())
-                .map(|j| (b[0] * get(a, j + 1) - a[0] * get(b, j + 1)) / b[0])
-                .collect();
+            let (next, next_err) = (0..a.len())
+                .map(|j| {
+                    let (a1, b1) = (get(a, j + 1), get(b, j + 1));
+                    let x = (b[0] * a1 - a[0] * b1) / b[0];
+                    let rounding = f64::EPSILON * (b[0] * a1).abs().max((a[0] * b1).abs());
+                    let carried = b[0].abs() * get(ea, j + 1)
+                        + a1.abs() * eb[0]
+                        + a[0].abs() * get(eb, j + 1)
+                        + b1.abs() * ea[0]
+                        + x.abs() * eb[0];
+                    (x, (rounding + carried) / b[0].abs())
+                })
+                .unzip();
             rows.push(next);
+            errs.push(next_err);
         }
         rows.iter()
+            .zip(&errs)
             .take(p.len())
-            .all(|r| r.first().is_some_and(|c| c.abs() > eps && c.signum() == p[0].signum()))
+            .all(|(r, e)| r.first().is_some_and(|c| !is_zero(*c, e[0]) && c.signum() == p[0].signum()))
     }
 
     /// Formats with the given variable name, e.g. `fmt_var("z")` gives `z^2 + 9`.
@@ -182,9 +194,9 @@ impl Poly {
                 (true, false) => {}
                 (false, neg) => out.push_str(if neg { " - " } else { " + " }),
             }
-            let mag = c.abs();
-            if mag != 1.0 || power == 0 {
-                out.push_str(&fmt_coeff(mag));
+            let mag = fmt_coeff(c.abs());
+            if mag != "1" || power == 0 {
+                out.push_str(&mag);
             }
             match power {
                 0 => {}
@@ -208,17 +220,15 @@ fn fmt_coeff(x: f64) -> String {
 }
 
 /// Coefficient-wise sum in which results that cancel to rounding noise (relative
-/// to the operands) become exact zeros, so s(s + 0.3) built by subtraction still
-/// has a root at 0.
+/// to the two terms being added) become exact zeros, so s(s + 0.3) built by
+/// subtraction still has a root at 0.
 fn sum_coeffs(a: &Poly, b: &Poly) -> Vec<f64> {
     let n = a.coeffs.len().max(b.coeffs.len());
     let pad = |p: &[f64]| [vec![0.0; n - p.len()], p.to_vec()].concat();
-    let tol = 1e-14 * a.max_abs().max(b.max_abs());
     pad(&a.coeffs)
         .iter()
         .zip(pad(&b.coeffs))
-        .map(|(x, y)| x + y)
-        .map(|x| if x.abs() <= tol { 0.0 } else { x })
+        .map(|(x, y)| if (x + y).abs() <= 1e-14 * x.abs().max(y.abs()) { 0.0 } else { x + y })
         .collect()
 }
 
@@ -269,6 +279,35 @@ impl fmt::Display for Poly {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sum_keeps_small_terms_that_did_not_cancel() {
+        assert_eq!(&Poly::new([1.0, 1e-15]) + &Poly::new([0.0]), Poly::new([1.0, 1e-15]));
+        let noisy = &(&Poly::new([1.0, 0.1]) * &Poly::new([1.0, 0.2])) - &Poly::new([0.02]);
+        assert_eq!(noisy, Poly::new([1.0, 0.30000000000000004, 0.0]));
+    }
+
+    #[test]
+    fn small_complex_roots_stay_complex() {
+        let r = Poly::new([1.0, 2e-11, 1.01e-20]).roots(); // -1e-11 ± 1e-10 i
+        for z in &r {
+            assert!((z.re + 1e-11).abs() < 1e-18 && (z.im.abs() - 1e-10).abs() < 1e-18, "{r:?}");
+        }
+    }
+
+    #[test]
+    fn hurwitz_accepts_light_damping_and_rejects_marginal() {
+        assert!(Poly::new([1.0, 1e-13, 1.0]).is_hurwitz());
+        assert!(!Poly::new([1.0, 0.0, 1.0]).is_hurwitz());
+        assert!(!Poly::new([1.0, 1.0, 1.0, 1.0]).is_hurwitz()); // (s + 1)(s^2 + 1)
+        assert!(!(&Poly::new([1.0, 0.3]) * &Poly::new([1.0, 0.0, 0.7])).is_hurwitz());
+        assert!(!Poly::new([1.0, 1.0, -1.0]).is_hurwitz());
+    }
+
+    #[test]
+    fn display_never_prints_a_unit_coefficient() {
+        assert_eq!(Poly::new([0.999999, 1.0]).to_string(), "s + 1");
+    }
 
     #[test]
     fn arithmetic_and_display() {

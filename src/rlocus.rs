@@ -53,7 +53,7 @@ impl Tf {
         let mut points: Vec<(f64, f64)> = poly
             .roots()
             .into_iter()
-            .filter(|z| z.im.abs() <= 1e-9 * z.re.abs().max(1.0))
+            .filter(|z| z.im.abs() <= 1e-9 * z.norm())
             .map(|z| (z.re, -real(d, z.re) / real(n, z.re)))
             .filter(|(_, k)| k.is_finite() && *k >= 0.0)
             .collect();
