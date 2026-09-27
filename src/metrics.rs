@@ -22,8 +22,17 @@ impl Tf {
         if final_value == 0.0 || !final_value.is_finite() {
             return None;
         }
+        // sim_grid's horizon is ten time constants of the slowest pole, but repeated or
+        // clustered slow poles settle later, so lengthen it (up to 8x) until they do.
         let (t_end, dt) = self.sim_grid();
-        let (t, y) = self.step_response(t_end, dt).ok()?;
+        let mut scale = 1.0;
+        let (t, y) = loop {
+            let (t, y) = self.step_response(scale * t_end, dt).ok()?;
+            if scale >= 8.0 || y.last().is_some_and(|v| (v / final_value - 1.0).abs() <= 0.02) {
+                break (t, y);
+            }
+            scale *= 2.0;
+        };
         if y.iter().any(|v| !v.is_finite()) {
             return None;
         }
@@ -90,6 +99,17 @@ mod tests {
         let info = Tf::new([10.0], [1.0, 1e4 + 1e-3, 10.0]).step_info().unwrap();
         assert!((info.rise_time - 2197.2).abs() < 1.0, "{info:?}");
         assert!(info.peak.is_finite());
+    }
+
+    #[test]
+    fn repeated_poles_still_settle() {
+        // (s+1)^-n settles later than ten time constants once n >= 5; step_info
+        // used to give up and return None for these stable systems.
+        for n in 1..=10 {
+            let g = Tf::from_polys(crate::Poly::new([1.0]), crate::Poly::new([1.0, 1.0]).pow(n));
+            let info = g.step_info().unwrap_or_else(|| panic!("n = {n}"));
+            assert!((info.final_value - 1.0).abs() < 1e-12 && info.overshoot_pct == 0.0);
+        }
     }
 
     #[test]
