@@ -1,16 +1,4 @@
-//! A small signals-and-systems toolbox: polynomials, transfer functions,
-//! stability, steady-state error, time and frequency response, root locus,
-//! discrete-time systems, signal utilities, and SVG plots.
-//!
-//! ```
-//! use sigsys::{Input, Tf};
-//!
-//! let s = Tf::s();
-//! let g = 2.0 / (&s * &s + 9.0);   // 2 / (s^2 + 9)
-//! let l = Tf::pid(10.0, 0.0, 1.0) * &g; // K = 10, K_d = 1
-//! assert!(l.unity_feedback().is_stable());
-//! assert!((l.steady_state_error(Input::Step).unwrap() - 9.0 / 29.0).abs() < 1e-12);
-//! ```
+#![doc = include_str!("../README.md")]
 
 pub mod discrete;
 pub mod freq;

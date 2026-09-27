@@ -7,23 +7,33 @@ systems, and SVG plots. It has one dependency (`num-complex`).
 ```rust
 use sigsys::{Input, Tf, save_stacked};
 
-let s = Tf::s();
-let g = 2.0 / (&s * &s + 9.0);          // plant 2 / (s^2 + 9)
-let l = Tf::pid(10.0, 0.0, 1.0) * &g;   // PD controller 10 + s, in series
-let closed = l.unity_feedback();
+fn main() -> std::io::Result<()> {
+    let s = Tf::s();
+    let g = 2.0 / (&s * &s + 9.0);          // plant 2 / (s^2 + 9)
+    let l = Tf::pid(10.0, 0.0, 1.0) * &g;   // PD controller 10 + s, in series
+    let closed = l.unity_feedback();
 
-assert!(closed.is_stable());
-println!("{closed}");
-//    2s + 20
-// -------------
-// s^2 + 2s + 29
+    assert!(closed.is_stable());
+    println!("{closed}");
+    //    2s + 20
+    // -------------
+    // s^2 + 2s + 29
+    assert_eq!(closed.to_string(), "   2s + 20   \n-------------\ns^2 + 2s + 29");
 
-let e = l.steady_state_error(Input::Step);   // Some(0.3103)
-let info = closed.step_info().unwrap();      // overshoot, rise/settling time, ...
-let pm = l.margins().phase.unwrap();         // 29.5° at 5.655 rad/s
+    let e = l.steady_state_error(Input::Step).unwrap();
+    assert!((e - 9.0 / 29.0).abs() < 1e-12);     // 0.3103
 
-closed.step_plot().save("step.svg")?;
-save_stacked(&l.bode_plot(), "bode.svg")?;
+    let info = closed.step_info().unwrap();      // overshoot, rise/settling time, ...
+    assert!(info.overshoot_pct > 0.0);
+
+    let pm = l.margins().phase.unwrap();         // 29.5° at 5.655 rad/s
+    assert!((pm.margin - 29.49).abs() < 0.01 && (pm.w - 5.655).abs() < 0.001);
+
+    let dir = std::env::temp_dir();
+    closed.step_plot().save(dir.join("step.svg"))?;
+    save_stacked(&l.bode_plot(), dir.join("bode.svg"))?;
+    Ok(())
+}
 ```
 
 ## Features
@@ -43,7 +53,14 @@ save_stacked(&l.bode_plot(), "bode.svg")?;
 
 ## Using it
 
-The crate isn't published. Add it by path or git:
+The crate isn't published. Add it from git:
+
+```toml
+[dependencies]
+sigsys = { git = "https://github.com/roccoagain/sigsys" }
+```
+
+or from a local checkout:
 
 ```toml
 [dependencies]
