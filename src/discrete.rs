@@ -2,9 +2,10 @@ use std::fmt;
 
 use num_complex::Complex64;
 
+use crate::Error;
 use crate::poly::Poly;
 use crate::ss;
-use crate::tf::{Tf, fraction, ratio_at_zero};
+use crate::tf::{Tf, fraction, monic, ratio_at_zero};
 
 /// Continuous-to-discrete conversion method.
 #[derive(Clone, Copy, Debug)]
@@ -31,9 +32,8 @@ impl Dtf {
     }
 
     pub fn from_polys(num: Poly, den: Poly, ts: f64) -> Self {
-        assert!(!den.is_zero(), "transfer function denominator is zero");
-        let lead = den.coeffs()[0];
-        Dtf { num: num.div_scalar(lead), den: den.div_scalar(lead), ts }
+        let (num, den) = monic(&num, &den);
+        Dtf { num, den, ts }
     }
 
     pub fn eval(&self, z: Complex64) -> Complex64 {
@@ -69,11 +69,13 @@ impl Dtf {
         self.eval(Complex64::from_polar(1.0, w * self.ts))
     }
 
-    /// Output for the input sequence `u`, from rest (difference equation).
-    /// Panics if the transfer function is non-causal.
-    pub fn simulate(&self, u: &[f64]) -> Vec<f64> {
+    /// Output for the input sequence `u`, from rest (difference equation), or
+    /// `Err(Improper)` if the transfer function is non-causal.
+    pub fn simulate(&self, u: &[f64]) -> Result<Vec<f64>, Error> {
         let n = self.den.degree();
-        assert!(self.num.degree() <= n, "non-causal transfer function");
+        if self.num.degree() > n {
+            return Err(Error::Improper);
+        }
         let a = self.den.coeffs();
         let b = [vec![0.0; n - self.num.degree()], self.num.coeffs().to_vec()].concat();
         let mut y = Vec::with_capacity(u.len());
@@ -82,13 +84,13 @@ impl Dtf {
             let past: f64 = (1..=n.min(k)).map(|i| a[i] * y[k - i]).sum();
             y.push(forced - past);
         }
-        y
+        Ok(y)
     }
 
     /// Unit step response over `samples` samples, as `(t, y)`.
-    pub fn step_response(&self, samples: usize) -> (Vec<f64>, Vec<f64>) {
+    pub fn step_response(&self, samples: usize) -> Result<(Vec<f64>, Vec<f64>), Error> {
         let t = (0..samples).map(|k| k as f64 * self.ts).collect();
-        (t, self.simulate(&vec![1.0; samples]))
+        Ok((t, self.simulate(&vec![1.0; samples])?))
     }
 }
 
@@ -99,21 +101,21 @@ impl fmt::Display for Dtf {
 }
 
 impl Tf {
-    /// Discretizes with sample time `ts`. ZOH panics for an improper transfer
-    /// function (it has no state-space form); Tustin handles any.
-    pub fn c2d(&self, ts: f64, method: Discretize) -> Dtf {
+    /// Discretizes with sample time `ts`. ZOH returns `Err(Improper)` for an
+    /// improper transfer function (it has no state-space form); Tustin handles any.
+    pub fn c2d(&self, ts: f64, method: Discretize) -> Result<Dtf, Error> {
         match method {
             Discretize::Zoh => zoh(self, ts),
-            Discretize::Tustin => tustin(self, ts),
+            Discretize::Tustin => Ok(tustin(self, ts)),
         }
     }
 }
 
-fn zoh(g: &Tf, ts: f64) -> Dtf {
-    let sys = g.to_ss();
+fn zoh(g: &Tf, ts: f64) -> Result<Dtf, Error> {
+    let sys = g.to_ss()?;
     let n = sys.b.len();
     if n == 0 {
-        return Dtf::new([sys.d], [1.0], ts);
+        return Ok(Dtf::new([sys.d], [1.0], ts));
     }
 
     let (ad, bd, _) = ss::discretize(&sys, ts);
@@ -125,7 +127,7 @@ fn zoh(g: &Tf, ts: f64) -> Dtf {
         num[n - 1 - k] += ss::dot(&sys.c, &ss::mat_vec(mk, &bd)); // M_(k+1) multiplies z^(n-1-k)
     }
     let rev = |v: Vec<f64>| v.into_iter().rev().collect::<Vec<_>>();
-    Dtf::new(rev(num), rev(char_poly), ts)
+    Ok(Dtf::new(rev(num), rev(char_poly), ts))
 }
 
 fn tustin(g: &Tf, ts: f64) -> Dtf {
@@ -146,7 +148,7 @@ mod tests {
     #[test]
     fn zoh_first_order_is_exact() {
         let t = 0.1;
-        let d = Tf::new([1.0], [1.0, 1.0]).c2d(t, Discretize::Zoh);
+        let d = Tf::new([1.0], [1.0, 1.0]).c2d(t, Discretize::Zoh).unwrap();
         let p = (-t).exp();
         assert!(close(d.num.coeffs()[0], 1.0 - p));
         assert!(close(d.den.coeffs()[1], -p));
@@ -155,9 +157,9 @@ mod tests {
     #[test]
     fn zoh_matches_continuous_step_at_samples() {
         let g = Tf::new([1.0, 5.0], [1.0, 2.0, 5.0]);
-        let d = g.c2d(0.05, Discretize::Zoh);
-        let (_, yd) = d.step_response(101);
-        let (_, yc) = g.step_response(5.0, 0.0005);
+        let d = g.c2d(0.05, Discretize::Zoh).unwrap();
+        let (_, yd) = d.step_response(101).unwrap();
+        let (_, yc) = g.step_response(5.0, 0.0005).unwrap();
         for k in 0..=100 {
             assert!((yd[k] - yc[k * 100]).abs() < 1e-8, "sample {k}");
         }
@@ -169,10 +171,19 @@ mod tests {
     #[test]
     fn tustin_first_order() {
         let t = 0.1;
-        let d = Tf::new([1.0], [1.0, 1.0]).c2d(t, Discretize::Tustin);
+        let d = Tf::new([1.0], [1.0, 1.0]).c2d(t, Discretize::Tustin).unwrap();
         assert!(close(d.dc_gain(), 1.0));
         assert!(close(d.poles()[0].re, (1.0 - t / 2.0) / (1.0 + t / 2.0)));
         assert!(d.is_stable());
+    }
+
+    #[test]
+    fn improper_is_an_error() {
+        let pd = Tf::pid(1.0, 0.0, 1.0);
+        assert_eq!(pd.c2d(0.1, Discretize::Zoh), Err(Error::Improper));
+        let d = pd.c2d(0.1, Discretize::Tustin).unwrap(); // proper in z
+        assert!(d.simulate(&[1.0]).is_ok());
+        assert_eq!(Dtf::new([1.0, 0.0], [1.0], 0.1).simulate(&[1.0]), Err(Error::Improper));
     }
 
     #[test]
@@ -195,7 +206,7 @@ mod tests {
     #[test]
     fn difference_equation() {
         // y[k] = 0.5 y[k-1] + u[k-1]
-        let y = Dtf::new([1.0], [1.0, -0.5], 1.0).simulate(&[1.0, 0.0, 0.0, 0.0]);
+        let y = Dtf::new([1.0], [1.0, -0.5], 1.0).simulate(&[1.0, 0.0, 0.0, 0.0]).unwrap();
         assert_eq!(y, vec![0.0, 1.0, 0.5, 0.25]);
     }
 }

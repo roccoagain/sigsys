@@ -5,6 +5,7 @@ use std::{fs, io, path::Path};
 
 use num_complex::Complex64;
 
+use crate::Error;
 use crate::discrete::Dtf;
 use crate::signals::{linspace, logspace};
 use crate::tf::Tf;
@@ -47,36 +48,43 @@ pub struct Plot {
 }
 
 impl Plot {
+    #[must_use]
     pub fn new(title: &str) -> Self {
         Plot { title: title.into(), ..Default::default() }
     }
 
+    #[must_use]
     pub fn labels(mut self, x: &str, y: &str) -> Self {
         self.x_label = x.into();
         self.y_label = y.into();
         self
     }
 
+    #[must_use]
     pub fn log_x(mut self) -> Self {
         self.log_x = true;
         self
     }
 
+    #[must_use]
     pub fn line(mut self, label: &str, points: Vec<(f64, f64)>) -> Self {
         self.series.push(Series { label: label.into(), points, style: Style::Line });
         self
     }
 
+    #[must_use]
     pub fn markers(mut self, label: &str, points: Vec<(f64, f64)>, marker: Marker) -> Self {
         self.series.push(Series { label: label.into(), points, style: Style::Markers(marker) });
         self
     }
 
+    #[must_use]
     pub fn hline(mut self, y: f64) -> Self {
         self.hlines.push(y);
         self
     }
 
+    #[must_use]
     pub fn vline(mut self, x: f64) -> Self {
         self.vlines.push(x);
         self
@@ -401,14 +409,15 @@ fn re_im(zs: &[Complex64]) -> Vec<(f64, f64)> {
 }
 
 impl Tf {
-    /// Step response over an automatic horizon, with the final value marked if stable.
-    pub fn step_plot(&self) -> Plot {
+    /// Step response over an automatic horizon, with the final value marked if
+    /// stable. `Err(Improper)` if the transfer function can't be simulated.
+    pub fn step_plot(&self) -> Result<Plot, Error> {
         let (t_end, dt) = self.sim_grid();
-        let (t, y) = self.step_response(t_end, dt);
+        let (t, y) = self.step_response(t_end, dt)?;
         let stride = (t.len() / 2000).max(1);
         let pts = t.iter().zip(&y).step_by(stride).map(|(t, y)| (*t, *y)).collect();
         let plot = Plot::new("Step response").labels("Time (s)", "Output").line("y(t)", pts);
-        if self.is_stable() { plot.hline(self.dc_gain()) } else { plot }
+        Ok(if self.is_stable() { plot.hline(self.dc_gain()) } else { plot })
     }
 
     /// Magnitude and phase plots, with gain/phase crossovers marked.
@@ -473,11 +482,11 @@ impl Tf {
 }
 
 impl Dtf {
-    /// Step response samples as dots.
-    pub fn step_plot(&self, samples: usize) -> Plot {
-        let (t, y) = self.step_response(samples);
+    /// Step response samples as dots. `Err(Improper)` if the transfer function is non-causal.
+    pub fn step_plot(&self, samples: usize) -> Result<Plot, Error> {
+        let (t, y) = self.step_response(samples)?;
         let pts = t.into_iter().zip(y).collect();
-        Plot::new("Discrete step response").labels("Time (s)", "Output").markers("y[k]", pts, Marker::Dot)
+        Ok(Plot::new("Discrete step response").labels("Time (s)", "Output").markers("y[k]", pts, Marker::Dot))
     }
 }
 
@@ -505,7 +514,7 @@ mod tests {
     #[test]
     fn svg_is_well_formed_enough() {
         let g = Tf::new([1.0], [1.0, 1.0, 1.0]);
-        let svg = g.step_plot().to_svg();
+        let svg = g.step_plot().unwrap().to_svg();
         assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"));
         assert!(svg.contains("<polyline"));
         assert!(!svg.contains("NaN") && !svg.contains("inf"));

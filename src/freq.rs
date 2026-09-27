@@ -4,7 +4,8 @@ use crate::poly::Poly;
 use crate::signals::logspace;
 use crate::tf::Tf;
 
-/// One point of a Bode sweep. Phase is unwrapped (continuous across ±180°).
+/// Magnitude and phase at one frequency. From [`Tf::bode_sweep`] the phase is
+/// unwrapped (continuous across ±180°); from [`Tf::bode`] it is wrapped to (-180, 180].
 #[derive(Clone, Copy, Debug)]
 pub struct BodePoint {
     pub w: f64,
@@ -104,6 +105,13 @@ impl Tf {
         let (nz, dz) = (self.num.zeros_at_origin(), self.den.zeros_at_origin());
         let sign = if self.num.trailing_coeff() / self.den.trailing_coeff() < 0.0 { -180.0 } else { 0.0 };
         sign + 90.0 * (nz as f64 - dz as f64)
+    }
+
+    /// Magnitude in dB and phase in degrees (wrapped to (-180, 180]) at `w` rad/s.
+    /// See [`Tf::bode_sweep`] for unwrapped phase over a range.
+    pub fn bode(&self, w: f64) -> BodePoint {
+        let g = self.freq_response(w);
+        BodePoint { w, mag_db: 20.0 * g.norm().log10(), phase_deg: g.arg().to_degrees() }
     }
 
     /// Magnitude and unwrapped phase at `n` log-spaced frequencies. Phase starts

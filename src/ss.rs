@@ -1,5 +1,6 @@
 //! Small dense state-space helpers used internally for simulation and discretization.
 
+use crate::Error;
 use crate::tf::Tf;
 
 pub(crate) type Mat = Vec<Vec<f64>>;
@@ -13,10 +14,12 @@ pub(crate) struct Ss {
 }
 
 impl Tf {
-    /// Controllable canonical form. Panics if the transfer function is improper.
-    pub(crate) fn to_ss(&self) -> Ss {
+    /// Controllable canonical form, or `Err(Improper)`.
+    pub(crate) fn to_ss(&self) -> Result<Ss, Error> {
         let n = self.den.degree();
-        assert!(self.num.degree() <= n, "improper transfer function has no state-space form");
+        if self.num.degree() > n {
+            return Err(Error::Improper);
+        }
 
         // Ascending-power coefficients; den is monic.
         let a_asc: Vec<f64> = self.den.coeffs().iter().rev().copied().collect();
@@ -36,7 +39,7 @@ impl Tf {
             b[n - 1] = 1.0;
         }
         let c = (0..n).map(|k| b_asc[k] - d * a_asc[k]).collect();
-        Ss { a, b, c, d }
+        Ok(Ss { a, b, c, d })
     }
 }
 
@@ -158,7 +161,7 @@ mod tests {
 
     #[test]
     fn char_poly_of_companion() {
-        let ss = Tf::new([1.0], [1.0, 6.0, 11.0, 6.0]).to_ss();
+        let ss = Tf::new([1.0], [1.0, 6.0, 11.0, 6.0]).to_ss().unwrap();
         let (c, _) = char_poly_adj(&ss.a);
         for (got, want) in c.iter().zip([6.0, 11.0, 6.0, 1.0]) {
             assert!((got - want).abs() < 1e-12);

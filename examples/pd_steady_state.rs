@@ -20,10 +20,10 @@ fn main() {
     let closed = (&Tf::new([1.0, 10.0], [1.0]) * &g).unity_feedback();
     println!("\nClosed loop with K = 10, K_d = 1:\n{closed}");
     println!("poles: {:?}", closed.poles());
-    let (t, y) = closed.step_response(5.0, 0.001);
+    let (t, y) = closed.step_response(5.0, 0.001).expect("closed loop is proper");
     for i in (0..t.len()).step_by(1000) {
         println!("  y({:.0}) = {:.4}", t[i], y[i]);
     }
-    let (mag, phase) = closed.bode(3.0);
-    println!("at ω = 3 rad/s: {mag:.2} dB, {phase:.1}°");
+    let p = closed.bode(3.0);
+    println!("at ω = 3 rad/s: {:.2} dB, {:.1}°", p.mag_db, p.phase_deg);
 }

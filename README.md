@@ -7,7 +7,7 @@ systems, and SVG plots. It has one dependency (`num-complex`).
 ```rust
 use sigsys::{Input, Tf, save_stacked};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let s = Tf::s();
     let g = 2.0 / (&s * &s + 9.0);          // plant 2 / (s^2 + 9)
     let l = Tf::pid(10.0, 0.0, 1.0) * &g;   // PD controller 10 + s, in series
@@ -30,7 +30,7 @@ fn main() -> std::io::Result<()> {
     assert!((pm.margin - 29.49).abs() < 0.01 && (pm.w - 5.655).abs() < 0.001);
 
     let dir = std::env::temp_dir();
-    closed.step_plot().save(dir.join("step.svg"))?;
+    closed.step_plot()?.save(dir.join("step.svg"))?;
     save_stacked(&l.bode_plot(), dir.join("bode.svg"))?;
     Ok(())
 }
@@ -85,6 +85,9 @@ cargo test
 - Functions that can have no answer return `Option`: `steady_state_error` and
   `step_info` return `None` for an unstable loop, and a margin is `None` when
   there is no crossover.
+- Operations that need a proper transfer function (`simulate`, `step_response`,
+  ZOH `c2d`, `step_plot`) return `Err(Error::Improper)` instead. Constructors and
+  operators panic on a zero denominator, as `f64` division would give infinity.
 - Operators take references (`&a * &b`) or owned values (`a * b`).
 
 ## Limitations
@@ -93,6 +96,7 @@ cargo test
 - Roots come from Durand–Kerner iteration. A repeated root of multiplicity `m`
   is accurate to roughly `1e-16^(1/m)`, e.g. about `1e-4` for a 4-fold root.
 - Improper transfer functions, such as a PID with a derivative term, can be
-  analysed and combined but not simulated or discretized with ZOH.
+  analysed and combined but not simulated or discretized with ZOH (those
+  return `Err(Error::Improper)`).
 - The phase of a system with poles or zeros exactly on the jω axis jumps by
   180°; `bode_sweep` unwraps that jump in an arbitrary direction.

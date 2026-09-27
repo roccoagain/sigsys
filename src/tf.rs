@@ -34,9 +34,8 @@ impl Tf {
     }
 
     pub fn from_polys(num: Poly, den: Poly) -> Self {
-        assert!(!den.is_zero(), "transfer function denominator is zero");
-        let lead = den.coeffs()[0];
-        Tf { num: num.div_scalar(lead), den: den.div_scalar(lead) }
+        let (num, den) = monic(&num, &den);
+        Tf { num, den }
     }
 
     pub fn gain(k: f64) -> Self {
@@ -137,13 +136,6 @@ impl Tf {
     pub fn freq_response(&self, w: f64) -> Complex64 {
         self.eval(Complex64::new(0.0, w))
     }
-
-    /// Magnitude in dB and phase in degrees (wrapped to (-180, 180]) at `w` rad/s.
-    /// See [`Tf::bode_sweep`] for unwrapped phase over a range.
-    pub fn bode(&self, w: f64) -> (f64, f64) {
-        let g = self.freq_response(w);
-        (20.0 * g.norm().log10(), g.arg().to_degrees())
-    }
 }
 
 impl Mul for &Tf {
@@ -192,6 +184,13 @@ impl Div for &Tf {
 }
 
 forward_ops!(Tf, scalar Tf::gain; Add add, Sub sub, Mul mul, Div div);
+
+/// Divides `num` and `den` by the leading coefficient of `den`. Panics if `den` is zero.
+pub(crate) fn monic(num: &Poly, den: &Poly) -> (Poly, Poly) {
+    assert!(!den.is_zero(), "transfer function denominator is zero");
+    let lead = den.coeffs()[0];
+    (num.div_scalar(lead), den.div_scalar(lead))
+}
 
 /// `lim s->0 num(s)/den(s)`, from the lowest-order nonzero coefficients.
 pub(crate) fn ratio_at_zero(num: &Poly, den: &Poly) -> f64 {
@@ -273,7 +272,7 @@ mod tests {
     #[test]
     fn butterworth_is_3db_at_cutoff() {
         for n in 1..=5 {
-            let (mag, _) = Tf::butterworth(n, 2.0).bode(2.0);
+            let mag = Tf::butterworth(n, 2.0).bode(2.0).mag_db;
             assert!((mag + 3.0103).abs() < 1e-3, "order {n}: {mag}");
         }
         assert_eq!(Tf::butterworth(2, 1.0).den.coeffs().len(), 3);
@@ -281,8 +280,8 @@ mod tests {
 
     #[test]
     fn bode_first_order() {
-        let (mag, phase) = Tf::new([1.0], [1.0, 1.0]).bode(1.0); // corner frequency
-        assert!((mag + 3.0103).abs() < 1e-3);
-        assert!((phase + 45.0).abs() < 1e-9);
+        let p = Tf::new([1.0], [1.0, 1.0]).bode(1.0); // corner frequency
+        assert!((p.mag_db + 3.0103).abs() < 1e-3);
+        assert!((p.phase_deg + 45.0).abs() < 1e-9);
     }
 }

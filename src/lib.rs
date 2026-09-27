@@ -19,6 +19,26 @@ pub use plot::{Marker, Plot, save_stacked};
 pub use poly::Poly;
 pub use tf::{Input, Tf};
 
+/// Why an operation on a transfer function could not be carried out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Error {
+    /// The numerator has higher degree than the denominator, so there is no
+    /// state-space form (continuous) or causal difference equation (discrete)
+    /// to simulate or discretize.
+    Improper,
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Error::Improper => f.write_str("transfer function is improper (numerator degree exceeds denominator)"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
 /// Implements the owned and mixed-reference versions of each operator by
 /// forwarding to the `&T op &T` impl. With `scalar $gain`, also implements
 /// `T op f64` and `f64 op T` (owned and borrowed), lifting the `f64` with `$gain`.

@@ -12,7 +12,7 @@ pub struct StepInfo {
 }
 
 impl Tf {
-    /// `None` if the system is unstable, its final value is zero, or the simulated
+    /// `None` if the system is unstable or improper, its final value is zero, or the simulated
     /// response fails to rise through 90% and settle within 2% of the final value.
     pub fn step_info(&self) -> Option<StepInfo> {
         if !self.is_stable() {
@@ -23,7 +23,7 @@ impl Tf {
             return None;
         }
         let (t_end, dt) = self.sim_grid();
-        let (t, y) = self.step_response(t_end, dt);
+        let (t, y) = self.step_response(t_end, dt).ok()?;
         if y.iter().any(|v| !v.is_finite()) {
             return None;
         }

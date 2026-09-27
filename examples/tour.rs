@@ -4,7 +4,7 @@
 use sigsys::signals::{convolve, fft_real};
 use sigsys::{Discretize, Tf, save_stacked};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("plots")?;
     let s = Tf::s();
 
@@ -16,7 +16,7 @@ fn main() -> std::io::Result<()> {
     println!("Closed loop:\n{closed}\n");
 
     // 3. Plots.
-    closed.step_plot().save("plots/step.svg")?;
+    closed.step_plot()?.save("plots/step.svg")?;
     save_stacked(&l.bode_plot(), "plots/bode.svg")?;
     closed.pzmap_plot().save("plots/pzmap.svg")?;
     (2.0 * (&s + 10.0) / (&s * &s + 9.0)).root_locus_plot(40.0).save("plots/rlocus.svg")?;
@@ -41,9 +41,9 @@ fn main() -> std::io::Result<()> {
     }
 
     // 6. Discrete time.
-    let dz = closed.c2d(0.05, Discretize::Zoh);
+    let dz = closed.c2d(0.05, Discretize::Zoh)?;
     println!("ZOH, T = 0.05:\n{dz}\nstable: {}, DC gain {:.4}\n", dz.is_stable(), dz.dc_gain());
-    dz.step_plot(100).save("plots/discrete_step.svg")?;
+    dz.step_plot(100)?.save("plots/discrete_step.svg")?;
 
     // 7. Signals.
     let lp = Tf::butterworth(4, 2.0);
