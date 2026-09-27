@@ -36,11 +36,8 @@ impl Tf {
     /// aside), resolving the fastest where that takes no more than 200,000 steps.
     pub fn sim_grid(&self) -> (f64, f64) {
         let poles = self.poles();
-        let slowest = poles
-            .iter()
-            .filter(|p| p.re.abs() > 1e-9 * p.norm())
-            .map(|p| p.re.abs())
-            .fold(f64::INFINITY, f64::min);
+        let slowest =
+            poles.iter().filter(|p| p.re.abs() > 1e-9 * p.norm()).map(|p| p.re.abs()).fold(f64::INFINITY, f64::min);
         let fastest = poles.iter().map(|p| p.norm()).fold(0.0, f64::max);
         let t_end = if slowest.is_finite() { (10.0 / slowest).max(1e-3) } else { 10.0 };
         let dt = (t_end / 5000.0).min(0.1 / fastest).max(t_end / 2e5);

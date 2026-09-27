@@ -4,6 +4,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use num_complex::Complex64;
 
+use crate::forward_ops;
 use crate::poly::Poly;
 
 /// A transfer function `num(s) / den(s)`, stored with a monic denominator.
@@ -35,7 +36,7 @@ impl Tf {
     pub fn from_polys(num: Poly, den: Poly) -> Self {
         assert!(!den.is_zero(), "transfer function denominator is zero");
         let lead = den.coeffs()[0];
-        Tf { num: divide(&num, lead), den: divide(&den, lead) }
+        Tf { num: num.div_scalar(lead), den: den.div_scalar(lead) }
     }
 
     pub fn gain(k: f64) -> Self {
@@ -55,11 +56,7 @@ impl Tf {
     /// PID controller `kp + ki/s + kd s`. Improper when `kd != 0`, so it can be
     /// analyzed and combined but not simulated on its own.
     pub fn pid(kp: f64, ki: f64, kd: f64) -> Self {
-        if ki == 0.0 {
-            Tf::new([kd, kp], [1.0])
-        } else {
-            Tf::new([kd, kp, ki], [1.0, 0.0])
-        }
+        if ki == 0.0 { Tf::new([kd, kp], [1.0]) } else { Tf::new([kd, kp, ki], [1.0, 0.0]) }
     }
 
     /// `k (s + zero) / (s + pole)`: lead when `zero < pole`, lag when `zero > pole`.
@@ -69,9 +66,8 @@ impl Tf {
 
     /// Butterworth low-pass filter of order `n`, cutoff `wc` rad/s, unity DC gain.
     pub fn butterworth(n: usize, wc: f64) -> Self {
-        let poles: Vec<Complex64> = (0..n)
-            .map(|k| Complex64::from_polar(wc, PI / 2.0 + (2 * k + 1) as f64 * PI / (2 * n) as f64))
-            .collect();
+        let poles: Vec<Complex64> =
+            (0..n).map(|k| Complex64::from_polar(wc, PI / 2.0 + (2 * k + 1) as f64 * PI / (2 * n) as f64)).collect();
         Tf::zpk(&[], &poles, wc.powi(n as i32))
     }
 
@@ -133,12 +129,7 @@ impl Tf {
             return Some(f64::INFINITY);
         }
         // Error constant: lim s->0 of s^n L(s), from the lowest nonzero coefficients.
-        let k = if nz > dz {
-            0.0
-        } else {
-            let (num, den) = (self.num.coeffs(), self.den.coeffs());
-            num[num.len() - 1 - nz] / den[den.len() - 1 - dz]
-        };
+        let k = if nz > dz { 0.0 } else { self.num.trailing_coeff() / self.den.trailing_coeff() };
         Some(if n == 0 { 1.0 / (1.0 + k) } else { 1.0 / k })
     }
 
@@ -200,57 +191,15 @@ impl Div for &Tf {
     }
 }
 
-/// Owned, mixed, and scalar versions of each operator, forwarding to `&Tf op &Tf`.
-macro_rules! tf_ops {
-    ($($trait:ident $method:ident),*) => {$(
-        impl $trait for Tf {
-            type Output = Tf;
-            fn $method(self, rhs: Tf) -> Tf { <&Tf as $trait<&Tf>>::$method(&self, &rhs) }
-        }
-        impl $trait<&Tf> for Tf {
-            type Output = Tf;
-            fn $method(self, rhs: &Tf) -> Tf { <&Tf as $trait<&Tf>>::$method(&self, rhs) }
-        }
-        impl $trait<Tf> for &Tf {
-            type Output = Tf;
-            fn $method(self, rhs: Tf) -> Tf { <&Tf as $trait<&Tf>>::$method(self, &rhs) }
-        }
-        impl $trait<f64> for &Tf {
-            type Output = Tf;
-            fn $method(self, k: f64) -> Tf { <&Tf as $trait<&Tf>>::$method(self, &Tf::gain(k)) }
-        }
-        impl $trait<f64> for Tf {
-            type Output = Tf;
-            fn $method(self, k: f64) -> Tf { <&Tf as $trait<&Tf>>::$method(&self, &Tf::gain(k)) }
-        }
-        impl $trait<&Tf> for f64 {
-            type Output = Tf;
-            fn $method(self, rhs: &Tf) -> Tf { <&Tf as $trait<&Tf>>::$method(&Tf::gain(self), rhs) }
-        }
-        impl $trait<Tf> for f64 {
-            type Output = Tf;
-            fn $method(self, rhs: Tf) -> Tf { <&Tf as $trait<&Tf>>::$method(&Tf::gain(self), &rhs) }
-        }
-    )*};
-}
-
-tf_ops!(Add add, Sub sub, Mul mul, Div div);
-
-/// Divides every coefficient by `k` (dividing, not multiplying by `1/k`, keeps
-/// results exact when they are representable, e.g. 3/5 == 0.6).
-pub(crate) fn divide(p: &Poly, k: f64) -> Poly {
-    Poly::new(p.coeffs().iter().map(|c| c / k).collect::<Vec<_>>())
-}
+forward_ops!(Tf, scalar Tf::gain; Add add, Sub sub, Mul mul, Div div);
 
 /// `lim s->0 num(s)/den(s)`, from the lowest-order nonzero coefficients.
 pub(crate) fn ratio_at_zero(num: &Poly, den: &Poly) -> f64 {
     if num.is_zero() {
         return 0.0;
     }
-    let (nz, dz) = (num.zeros_at_origin(), den.zeros_at_origin());
-    let (n, d) = (num.coeffs(), den.coeffs());
-    let ratio = n[n.len() - 1 - nz] / d[d.len() - 1 - dz];
-    match nz.cmp(&dz) {
+    let ratio = num.trailing_coeff() / den.trailing_coeff();
+    match num.zeros_at_origin().cmp(&den.zeros_at_origin()) {
         std::cmp::Ordering::Greater => 0.0,
         std::cmp::Ordering::Equal => ratio,
         std::cmp::Ordering::Less => f64::INFINITY.copysign(ratio),

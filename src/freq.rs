@@ -102,8 +102,7 @@ impl Tf {
             return 0.0;
         }
         let (nz, dz) = (self.num.zeros_at_origin(), self.den.zeros_at_origin());
-        let (n, d) = (self.num.coeffs(), self.den.coeffs());
-        let sign = if n[n.len() - 1 - nz] / d[d.len() - 1 - dz] < 0.0 { -180.0 } else { 0.0 };
+        let sign = if self.num.trailing_coeff() / self.den.trailing_coeff() < 0.0 { -180.0 } else { 0.0 };
         sign + 90.0 * (nz as f64 - dz as f64)
     }
 

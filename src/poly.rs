@@ -3,7 +3,7 @@ use std::ops::{Add, Mul, Neg, Sub};
 
 use num_complex::Complex64;
 
-use crate::forward_owned_op;
+use crate::forward_ops;
 
 /// A polynomial, coefficients highest power first: `s^2 + 9` is `[1, 0, 9]`.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +53,12 @@ impl Poly {
         Poly::new(self.coeffs.iter().map(|c| c * k).collect::<Vec<_>>())
     }
 
+    /// Divides every coefficient by `k` (dividing, not multiplying by `1/k`, keeps
+    /// results exact when they are representable, e.g. 3/5 == 0.6).
+    pub(crate) fn div_scalar(&self, k: f64) -> Poly {
+        Poly::new(self.coeffs.iter().map(|c| c / k).collect::<Vec<_>>())
+    }
+
     pub fn pow(&self, k: usize) -> Poly {
         (0..k).fold(Poly::new([1.0]), |acc, _| &acc * self)
     }
@@ -84,6 +90,12 @@ impl Poly {
             return 0;
         }
         self.coeffs.iter().rev().take_while(|c| **c == 0.0).count()
+    }
+
+    /// Lowest-order nonzero coefficient, which sets the behaviour near `s = 0`
+    /// (0 for the zero polynomial).
+    pub fn trailing_coeff(&self) -> f64 {
+        self.coeffs[self.coeffs.len() - 1 - self.zeros_at_origin()]
     }
 
     /// All complex roots, via Durand–Kerner iteration. Simple roots are accurate
@@ -266,9 +278,14 @@ impl Sub for &Poly {
     }
 }
 
-forward_owned_op!(Poly, Add, add);
-forward_owned_op!(Poly, Mul, mul);
-forward_owned_op!(Poly, Sub, sub);
+impl Neg for Poly {
+    type Output = Poly;
+    fn neg(self) -> Poly {
+        -&self
+    }
+}
+
+forward_ops!(Poly; Add add, Sub sub, Mul mul);
 
 impl fmt::Display for Poly {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -316,6 +333,10 @@ mod tests {
         assert_eq!(&a * &b, Poly::new([1.0, 3.0, 2.0]));
         assert_eq!(&a - &b, Poly::new([-1.0]));
         assert_eq!(a.pow(2), Poly::new([1.0, 2.0, 1.0]));
+        assert_eq!(a.clone() * &b, &a * b.clone());
+        assert_eq!(-a.clone(), Poly::new([-1.0, -1.0]));
+        assert_eq!(Poly::new([3.0, 2.0, 0.0]).trailing_coeff(), 2.0);
+        assert_eq!(Poly::new([0.0]).trailing_coeff(), 0.0);
         assert_eq!(Poly::new([0.0, 1.0, 0.0, 9.0]).to_string(), "s^2 + 9");
         assert_eq!(Poly::new([1.0, 3.0, 2.0]).derivative(), Poly::new([2.0, 3.0]));
         assert_eq!(Poly::new([5.0]).derivative(), Poly::new([0.0]));

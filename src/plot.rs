@@ -119,31 +119,68 @@ impl Plot {
         };
         for (v, label) in xticks {
             let x = x0 + (v - xmin) / (xmax - xmin) * pw;
-            write!(out, r##"<line x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{:.1}" stroke="#e5e7eb"/>"##, y0 + ph).unwrap();
+            write!(out, r##"<line x1="{x:.1}" y1="{y0:.1}" x2="{x:.1}" y2="{:.1}" stroke="#e5e7eb"/>"##, y0 + ph)
+                .unwrap();
             write!(out, r#"<text x="{x:.1}" y="{:.1}" text-anchor="middle">{label}</text>"#, y0 + ph + 16.0).unwrap();
         }
         let (ystep, yticks) = nice_ticks(ymin, ymax, false);
         for v in yticks {
             let y = py(v);
-            write!(out, r##"<line x1="{x0:.1}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#e5e7eb"/>"##, x0 + pw).unwrap();
-            write!(out, r#"<text x="{:.1}" y="{:.1}" text-anchor="end">{}</text>"#, x0 - 6.0, y + 4.0, fmt_num(v, ystep))
+            write!(out, r##"<line x1="{x0:.1}" y1="{y:.1}" x2="{:.1}" y2="{y:.1}" stroke="#e5e7eb"/>"##, x0 + pw)
                 .unwrap();
+            write!(
+                out,
+                r#"<text x="{:.1}" y="{:.1}" text-anchor="end">{}</text>"#,
+                x0 - 6.0,
+                y + 4.0,
+                fmt_num(v, ystep)
+            )
+            .unwrap();
         }
 
         // Titles.
         let cx = x0 + pw / 2.0;
         let cy = y0 + ph / 2.0;
-        write!(out, r#"<text x="{cx:.1}" y="{:.1}" text-anchor="middle" font-size="14" font-weight="bold">{}</text>"#, oy + 22.0, esc(&self.title)).unwrap();
-        write!(out, r#"<text x="{cx:.1}" y="{:.1}" text-anchor="middle">{}</text>"#, oy + HEIGHT - 10.0, esc(&self.x_label)).unwrap();
-        write!(out, r#"<text x="18" y="{cy:.1}" text-anchor="middle" transform="rotate(-90 18 {cy:.1})">{}</text>"#, esc(&self.y_label)).unwrap();
+        write!(
+            out,
+            r#"<text x="{cx:.1}" y="{:.1}" text-anchor="middle" font-size="14" font-weight="bold">{}</text>"#,
+            oy + 22.0,
+            esc(&self.title)
+        )
+        .unwrap();
+        write!(
+            out,
+            r#"<text x="{cx:.1}" y="{:.1}" text-anchor="middle">{}</text>"#,
+            oy + HEIGHT - 10.0,
+            esc(&self.x_label)
+        )
+        .unwrap();
+        write!(
+            out,
+            r#"<text x="18" y="{cy:.1}" text-anchor="middle" transform="rotate(-90 18 {cy:.1})">{}</text>"#,
+            esc(&self.y_label)
+        )
+        .unwrap();
 
         // Data, clipped to the plot area.
         write!(out, r#"<clipPath id="clip{id}"><rect x="{x0}" y="{y0}" width="{pw}" height="{ph}"/></clipPath><g clip-path="url(#clip{id})">"#).unwrap();
         for &y in &self.hlines {
-            write!(out, r##"<line x1="{x0:.1}" y1="{0:.1}" x2="{1:.1}" y2="{0:.1}" stroke="#6b7280" stroke-dasharray="4 3"/>"##, py(y), x0 + pw).unwrap();
+            write!(
+                out,
+                r##"<line x1="{x0:.1}" y1="{0:.1}" x2="{1:.1}" y2="{0:.1}" stroke="#6b7280" stroke-dasharray="4 3"/>"##,
+                py(y),
+                x0 + pw
+            )
+            .unwrap();
         }
         for &x in self.vlines.iter().filter(|x| usable(**x, 0.0)) {
-            write!(out, r##"<line x1="{0:.1}" y1="{y0:.1}" x2="{0:.1}" y2="{1:.1}" stroke="#6b7280" stroke-dasharray="4 3"/>"##, px(x), y0 + ph).unwrap();
+            write!(
+                out,
+                r##"<line x1="{0:.1}" y1="{y0:.1}" x2="{0:.1}" y2="{1:.1}" stroke="#6b7280" stroke-dasharray="4 3"/>"##,
+                px(x),
+                y0 + ph
+            )
+            .unwrap();
         }
         for (i, s) in self.series.iter().enumerate() {
             let color = COLORS[i % COLORS.len()];
@@ -151,8 +188,14 @@ impl Plot {
                 Style::Line => {
                     // Break the line wherever a point can't be drawn.
                     for segment in s.points.split(|(x, y)| !usable(*x, *y)).filter(|seg| seg.len() > 1) {
-                        let pts: Vec<String> = segment.iter().map(|(x, y)| format!("{:.2},{:.2}", px(*x), py(*y))).collect();
-                        write!(out, r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="2"/>"#, pts.join(" ")).unwrap();
+                        let pts: Vec<String> =
+                            segment.iter().map(|(x, y)| format!("{:.2},{:.2}", px(*x), py(*y))).collect();
+                        write!(
+                            out,
+                            r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="2"/>"#,
+                            pts.join(" ")
+                        )
+                        .unwrap();
                     }
                 }
                 Style::Markers(m) => {
@@ -166,7 +209,8 @@ impl Plot {
         write!(out, r##"<rect x="{x0}" y="{y0}" width="{pw}" height="{ph}" fill="none" stroke="#374151"/>"##).unwrap();
 
         // Legend, top-right inside the plot.
-        let labeled: Vec<(usize, &Series)> = self.series.iter().enumerate().filter(|(_, s)| !s.label.is_empty()).collect();
+        let labeled: Vec<(usize, &Series)> =
+            self.series.iter().enumerate().filter(|(_, s)| !s.label.is_empty()).collect();
         if !labeled.is_empty() {
             let longest = labeled.iter().map(|(_, s)| s.label.chars().count()).max().unwrap();
             let (w, h) = (40.0 + longest as f64 * 7.0, 8.0 + 18.0 * labeled.len() as f64);
@@ -185,7 +229,10 @@ impl Plot {
                 (x0 + 8.0, y0 + ph - h - 8.0),
             ];
             let covered = |(cx, cy): (f64, f64)| {
-                drawn.iter().filter(|(x, y)| *x >= cx - 6.0 && *x <= cx + w + 6.0 && *y >= cy - 6.0 && *y <= cy + h + 6.0).count()
+                drawn
+                    .iter()
+                    .filter(|(x, y)| *x >= cx - 6.0 && *x <= cx + w + 6.0 && *y >= cy - 6.0 && *y <= cy + h + 6.0)
+                    .count()
             };
             let (lx, ly) = corners.into_iter().min_by_key(|c| covered(*c)).unwrap();
             write!(out, r##"<rect x="{lx:.1}" y="{ly:.1}" width="{w:.1}" height="{h:.1}" fill="white" fill-opacity="0.9" stroke="#d1d5db"/>"##).unwrap();
@@ -193,7 +240,15 @@ impl Plot {
                 let color = COLORS[i % COLORS.len()];
                 let y = ly + 16.0 + 18.0 * row as f64;
                 match s.style {
-                    Style::Line => write!(out, r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{color}" stroke-width="2"/>"#, lx + 8.0, y - 4.0, lx + 28.0, y - 4.0).unwrap(),
+                    Style::Line => write!(
+                        out,
+                        r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{color}" stroke-width="2"/>"#,
+                        lx + 8.0,
+                        y - 4.0,
+                        lx + 28.0,
+                        y - 4.0
+                    )
+                    .unwrap(),
                     Style::Markers(m) => marker(out, m, lx + 18.0, y - 4.0, color),
                 }
                 write!(out, r#"<text x="{:.1}" y="{y:.1}">{}</text>"#, lx + 34.0, esc(&s.label)).unwrap();
@@ -222,11 +277,20 @@ fn svg(plots: &[&Plot]) -> String {
 fn marker(out: &mut String, m: Marker, x: f64, y: f64, color: &str) {
     match m {
         Marker::Dot => write!(out, r#"<circle cx="{x:.2}" cy="{y:.2}" r="2.5" fill="{color}"/>"#),
-        Marker::Circle => write!(out, r#"<circle cx="{x:.2}" cy="{y:.2}" r="5" fill="white" stroke="{color}" stroke-width="2"/>"#),
+        Marker::Circle => {
+            write!(out, r#"<circle cx="{x:.2}" cy="{y:.2}" r="5" fill="white" stroke="{color}" stroke-width="2"/>"#)
+        }
         Marker::Cross => write!(
             out,
             r#"<path d="M{:.2} {:.2}L{:.2} {:.2}M{:.2} {:.2}L{:.2} {:.2}" stroke="{color}" stroke-width="2"/>"#,
-            x - 5.0, y - 5.0, x + 5.0, y + 5.0, x - 5.0, y + 5.0, x + 5.0, y - 5.0
+            x - 5.0,
+            y - 5.0,
+            x + 5.0,
+            y + 5.0,
+            x - 5.0,
+            y + 5.0,
+            x + 5.0,
+            y - 5.0
         ),
     }
     .unwrap();
@@ -250,7 +314,16 @@ fn nice_ticks(lo: f64, hi: f64, decades: bool) -> (f64, Vec<f64>) {
     let raw = (hi - lo) / 6.0;
     let mag = 10f64.powf(raw.log10().floor());
     let norm = raw / mag;
-    let mut step = mag * if norm < 1.5 { 1.0 } else if norm < 3.0 { 2.0 } else if norm < 7.0 { 5.0 } else { 10.0 };
+    let mut step = mag
+        * if norm < 1.5 {
+            1.0
+        } else if norm < 3.0 {
+            2.0
+        } else if norm < 7.0 {
+            5.0
+        } else {
+            10.0
+        };
     if decades {
         step = step.max(1.0).round();
     }

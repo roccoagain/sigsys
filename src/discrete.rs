@@ -4,7 +4,7 @@ use num_complex::Complex64;
 
 use crate::poly::Poly;
 use crate::ss;
-use crate::tf::{Tf, divide, fraction, ratio_at_zero};
+use crate::tf::{Tf, fraction, ratio_at_zero};
 
 /// Continuous-to-discrete conversion method.
 #[derive(Clone, Copy, Debug)]
@@ -33,7 +33,7 @@ impl Dtf {
     pub fn from_polys(num: Poly, den: Poly, ts: f64) -> Self {
         assert!(!den.is_zero(), "transfer function denominator is zero");
         let lead = den.coeffs()[0];
-        Dtf { num: divide(&num, lead), den: divide(&den, lead), ts }
+        Dtf { num: num.div_scalar(lead), den: den.div_scalar(lead), ts }
     }
 
     pub fn eval(&self, z: Complex64) -> Complex64 {

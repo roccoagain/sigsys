@@ -19,15 +19,44 @@ pub use plot::{Marker, Plot, save_stacked};
 pub use poly::Poly;
 pub use tf::{Input, Tf};
 
-/// Implements an owned `a op b` by forwarding to the `&a op &b` impl.
-macro_rules! forward_owned_op {
-    ($t:ty, $trait:ident, $method:ident) => {
+/// Implements the owned and mixed-reference versions of each operator by
+/// forwarding to the `&T op &T` impl. With `scalar $gain`, also implements
+/// `T op f64` and `f64 op T` (owned and borrowed), lifting the `f64` with `$gain`.
+macro_rules! forward_ops {
+    ($t:ty; $($trait:ident $method:ident),*) => {$(
         impl std::ops::$trait for $t {
             type Output = $t;
-            fn $method(self, rhs: $t) -> $t {
-                (&self).$method(&rhs)
-            }
+            fn $method(self, rhs: $t) -> $t { <&$t as std::ops::$trait<&$t>>::$method(&self, &rhs) }
         }
+        impl std::ops::$trait<&$t> for $t {
+            type Output = $t;
+            fn $method(self, rhs: &$t) -> $t { <&$t as std::ops::$trait<&$t>>::$method(&self, rhs) }
+        }
+        impl std::ops::$trait<$t> for &$t {
+            type Output = $t;
+            fn $method(self, rhs: $t) -> $t { <&$t as std::ops::$trait<&$t>>::$method(self, &rhs) }
+        }
+    )*};
+    ($t:ty, scalar $gain:path; $($trait:ident $method:ident),*) => {
+        forward_ops!($t; $($trait $method),*);
+        $(
+            impl std::ops::$trait<f64> for &$t {
+                type Output = $t;
+                fn $method(self, k: f64) -> $t { <&$t as std::ops::$trait<&$t>>::$method(self, &$gain(k)) }
+            }
+            impl std::ops::$trait<f64> for $t {
+                type Output = $t;
+                fn $method(self, k: f64) -> $t { <&$t as std::ops::$trait<&$t>>::$method(&self, &$gain(k)) }
+            }
+            impl std::ops::$trait<&$t> for f64 {
+                type Output = $t;
+                fn $method(self, rhs: &$t) -> $t { <&$t as std::ops::$trait<&$t>>::$method(&$gain(self), rhs) }
+            }
+            impl std::ops::$trait<$t> for f64 {
+                type Output = $t;
+                fn $method(self, rhs: $t) -> $t { <&$t as std::ops::$trait<&$t>>::$method(&$gain(self), &rhs) }
+            }
+        )*
     };
 }
-pub(crate) use forward_owned_op;
+pub(crate) use forward_ops;
