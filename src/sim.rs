@@ -87,6 +87,26 @@ mod tests {
     }
 
     #[test]
+    fn random_stable_systems_settle_at_dc_gain() {
+        let mut rng = crate::TestRng::new(3);
+        for _ in 0..200 {
+            let (np, nz) = (rng.int(1, 6), rng.int(0, 3));
+            let root = |rng: &mut crate::TestRng, re_sign: f64| {
+                num_complex::Complex64::new(re_sign * 10f64.powf(rng.uniform(-1.0, 1.0)), 0.0)
+            };
+            let poles: Vec<_> = (0..np).map(|_| root(&mut rng, -1.0)).collect();
+            let zeros: Vec<_> = (0..nz.min(np)).map(|_| root(&mut rng, -1.0)).collect();
+            let g = Tf::zpk(&zeros, &poles, 1.0);
+            // sim_grid's horizon (ten slowest time constants) can leave clustered slow
+            // poles ~0.1% short of settled, so run three times as long.
+            let (t_end, dt) = g.sim_grid();
+            let (_, y) = g.step_response(3.0 * t_end, dt).unwrap();
+            let dc = g.dc_gain();
+            assert!((y.last().unwrap() - dc).abs() < 1e-6 * dc.abs().max(1.0), "{g}");
+        }
+    }
+
+    #[test]
     fn biproper_has_direct_feedthrough() {
         let (_, y) = Tf::new([2.0, 1.0], [1.0, 1.0]).step_response(0.1, 0.01).unwrap();
         assert_eq!(y[0], 2.0);

@@ -171,6 +171,18 @@ mod tests {
     }
 
     #[test]
+    fn high_order_loop_has_margins() {
+        // K / ((s+1)(s+2)...(s+14)) with DC gain 10: root finding once returned
+        // NaN here, which made both margins silently None ("infinite").
+        let poles: Vec<Complex64> = (1..=14).map(|k| Complex64::new(-(k as f64), 0.0)).collect();
+        let dc = (1..=14).map(|k| k as f64).product::<f64>();
+        let m = Tf::zpk(&[], &poles, 10.0 * dc).margins();
+        let (pm, gm) = (m.phase.unwrap(), m.gain.unwrap());
+        assert!((Tf::zpk(&[], &poles, 10.0 * dc).bode(pm.w).mag_db).abs() < 1e-6);
+        assert!(pm.margin < 0.0 && gm.margin < 1.0, "{m:?}"); // DC gain 10 with 14 lags: unstable
+    }
+
+    #[test]
     fn classic_third_order_margins() {
         // L = 1 / (s(s+1)(s+2)): phase crossover at √2 with |L| = 1/6.
         let m = Tf::new([1.0], [1.0, 3.0, 2.0, 0.0]).margins();

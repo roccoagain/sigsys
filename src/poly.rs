@@ -1,3 +1,4 @@
+use std::f64::consts::PI;
 use std::fmt::{self, Write as _};
 use std::ops::{Add, Mul, Neg, Sub};
 
@@ -110,7 +111,7 @@ impl Poly {
     }
 
     /// All complex roots, via Durand–Kerner iteration. Simple roots are accurate
-    /// to near machine precision. A root of multiplicity `m` is inherently
+    /// to near machine precision (relative to the polynomial's conditioning). A root of multiplicity `m` is inherently
     /// ill-conditioned: expect errors around `1e-16^(1/m)` (about 1e-4 for a
     /// 4-fold root), possibly as a small spurious imaginary part.
     pub fn roots(&self) -> Vec<Complex64> {
@@ -123,20 +124,24 @@ impl Poly {
         }
 
         let monic: Vec<f64> = reduced.iter().map(|c| c / reduced[0]).collect();
-        let p = Poly { coeffs: monic };
-        let seed = Complex64::new(0.4, 0.9);
-        let mut r: Vec<Complex64> = (0..n).map(|k| seed.powu(k as u32)).collect();
-        for _ in 0..2000 {
-            let mut max_step: f64 = 0.0;
-            for i in 0..n {
-                let denom: Complex64 = (0..n).filter(|j| *j != i).map(|j| r[i] - r[j]).product();
-                let step = p.eval(r[i]) / denom;
-                r[i] -= step;
-                max_step = max_step.max(step.norm());
-            }
-            if max_step < 1e-14 {
-                break;
-            }
+        // Substitute s = σt with σ the geometric mean of the root magnitudes, so the
+        // roots in t are of order 1 whether they sit near 1e-6 or 1e6. Started near
+        // the unit circle, the iteration then can't overshoot far enough to overflow.
+        let sigma = monic[n].abs().powf(1.0 / n as f64);
+        let scaled: Vec<f64> = monic.iter().enumerate().map(|(i, c)| c / sigma.powi(i as i32)).collect();
+        let (p, sigma) = if scaled.iter().all(|c| c.is_finite()) {
+            (Poly { coeffs: scaled }, sigma)
+        } else {
+            (Poly { coeffs: monic }, 1.0)
+        };
+        // If one starting circle fails, retry from another rather than return NaN.
+        let mut r = [(1.0, 0.4), (0.5, 1.1), (2.0, 2.3)]
+            .into_iter()
+            .map(|(radius, angle)| durand_kerner(&p, radius, angle))
+            .find(|r| r.iter().all(|z| z.is_finite()))
+            .expect("root finding diverged from every starting point");
+        for z in &mut r {
+            *z *= sigma;
         }
 
         for z in &mut r {
@@ -231,6 +236,29 @@ impl Poly {
     }
 }
 
+/// Durand–Kerner iteration for the roots of monic `p`, from `degree` starting
+/// points evenly spaced on a circle of the given radius and rotated by `angle`
+/// (off the real axis, so they aren't conjugate-symmetric). Stops early if an
+/// iterate stops being finite.
+fn durand_kerner(p: &Poly, radius: f64, angle: f64) -> Vec<Complex64> {
+    let n = p.degree();
+    let mut r: Vec<Complex64> =
+        (0..n).map(|k| Complex64::from_polar(radius, angle + 2.0 * PI * k as f64 / n as f64)).collect();
+    for _ in 0..2000 {
+        let mut max_step: f64 = 0.0;
+        for i in 0..n {
+            let denom: Complex64 = (0..n).filter(|j| *j != i).map(|j| r[i] - r[j]).product();
+            let step = p.eval(r[i]) / denom;
+            r[i] -= step;
+            max_step = max_step.max(step.norm());
+        }
+        if max_step < 1e-14 || !max_step.is_finite() || r.iter().any(|z| !z.is_finite()) {
+            break;
+        }
+    }
+    r
+}
+
 /// Five significant figures, trailing zeros trimmed; scientific notation when tiny or huge.
 fn fmt_coeff(x: f64) -> String {
     let exp = x.abs().log10().floor();
@@ -307,6 +335,95 @@ impl fmt::Display for Poly {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TestRng;
+
+    /// Largest relative distance from each wanted root to its nearest unused computed root.
+    fn worst_match(got: &[Complex64], want: &[Complex64]) -> f64 {
+        assert_eq!(got.len(), want.len());
+        let mut used = vec![false; got.len()];
+        want.iter()
+            .map(|w| {
+                let (j, e) = (0..got.len())
+                    .filter(|j| !used[*j])
+                    .map(|j| (j, (got[j] - w).norm() / w.norm().max(1e-300)))
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .unwrap();
+                used[j] = true;
+                e
+            })
+            .fold(0.0, f64::max)
+    }
+
+    /// `|p(z)|` relative to the size of the terms summed to evaluate it: about
+    /// machine epsilon when `z` is an exact root of a slightly perturbed `p`.
+    fn backward_error(p: &Poly, z: Complex64) -> f64 {
+        let scale = p.coeffs().iter().fold(0.0, |acc, c| acc * z.norm() + c.abs());
+        p.eval(z).norm() / scale
+    }
+
+    /// Random real roots and conjugate pairs, magnitudes spread over `decades` either side of 1.
+    fn random_roots(rng: &mut TestRng, n: usize, decades: f64) -> Vec<Complex64> {
+        let mut r = Vec::with_capacity(n);
+        while r.len() < n {
+            let mag = 10f64.powf(rng.uniform(-decades, decades));
+            if r.len() + 2 <= n && rng.uniform(0.0, 1.0) < 0.5 {
+                let z = Complex64::from_polar(mag, rng.uniform(0.05, 3.09));
+                r.extend([z, z.conj()]);
+            } else {
+                r.push(Complex64::new(if rng.uniform(0.0, 1.0) < 0.5 { -mag } else { mag }, 0.0));
+            }
+        }
+        r
+    }
+
+    #[test]
+    fn consecutive_integer_roots_up_to_order_20() {
+        // Roots -1..-n: once overflowed to NaN from n = 14. Wilkinson's polynomial
+        // is famously ill-conditioned, so forward error grows with n; backward
+        // error (how exactly each root satisfies p) should stay near epsilon.
+        for n in 1..=20 {
+            let want: Vec<Complex64> = (1..=n).map(|k| Complex64::new(-(k as f64), 0.0)).collect();
+            let p = Poly::from_roots(&want);
+            let got = p.roots();
+            assert!(got.iter().all(|z| z.is_finite()), "n = {n}: {got:?}");
+            for z in &got {
+                assert!(backward_error(&p, *z) < 1e-15, "n = {n}: {z}");
+            }
+            let tol = if n <= 12 { 1e-8 } else { 1e-2 };
+            assert!(worst_match(&got, &want) < tol, "n = {n}");
+        }
+    }
+
+    #[test]
+    fn random_roots_round_trip() {
+        let mut rng = TestRng::new(7);
+        for decades in [0.5, 1.5, 3.0] {
+            for _ in 0..500 {
+                let n = rng.int(1, 10);
+                let want = random_roots(&mut rng, n, decades);
+                let got = Poly::from_roots(&want).roots();
+                assert!(worst_match(&got, &want) < 1e-9, "{want:?}\n{got:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn routh_agrees_with_roots() {
+        let mut rng = TestRng::new(11);
+        let mut checked = 0;
+        for _ in 0..5000 {
+            let n = rng.int(1, 8);
+            let c: Vec<f64> = (0..=n).map(|i| if i == 0 { 1.0 } else { rng.uniform(-5.0, 5.0) }).collect();
+            let p = Poly::new(c);
+            let max_re = p.roots().iter().map(|z| z.re).fold(f64::NEG_INFINITY, f64::max);
+            if max_re.abs() < 1e-6 {
+                continue; // too close to the boundary for the roots to decide
+            }
+            checked += 1;
+            assert_eq!(p.is_hurwitz(), max_re < 0.0, "{p}");
+        }
+        assert!(checked > 4900);
+    }
 
     #[test]
     fn sum_keeps_small_terms_that_did_not_cancel() {

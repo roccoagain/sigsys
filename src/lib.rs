@@ -80,3 +80,27 @@ macro_rules! forward_ops {
     };
 }
 pub(crate) use forward_ops;
+
+/// Deterministic pseudo-random numbers for property-style tests (xorshift64).
+#[cfg(test)]
+pub(crate) struct TestRng(u64);
+
+#[cfg(test)]
+impl TestRng {
+    pub(crate) fn new(seed: u64) -> Self {
+        TestRng(seed.max(1))
+    }
+
+    /// Uniform in `[lo, hi)`.
+    pub(crate) fn uniform(&mut self, lo: f64, hi: f64) -> f64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        lo + (hi - lo) * (self.0 >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Uniform integer in `lo..=hi`.
+    pub(crate) fn int(&mut self, lo: usize, hi: usize) -> usize {
+        lo + (self.uniform(0.0, (hi - lo + 1) as f64) as usize).min(hi - lo)
+    }
+}
